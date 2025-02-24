@@ -2,6 +2,34 @@ from typing import Generator
 
 import torch
 
+# https://github.com/KellerJordan/Muon/blob/master/muon.py
+
+
+# @torch.compile
+def zeropower_via_newtonschulz5(G, steps=10, eps=1e-7):
+    """
+    Newton-Schulz iteration to compute the zeroth power / orthogonalization of G. We opt to use a
+    quintic iteration whose coefficients are selected to maximize the slope at zero. For the purpose
+    of minimizing steps, it turns out to be empirically effective to keep increasing the slope at
+    zero even beyond the point where the iteration no longer converges all the way to one everywhere
+    on the interval. This iteration therefore does not produce UV^T but rather something like US'V^T
+    where S' is diagonal with S_{ii}' ~ Uniform(0.5, 1.5), which turns out not to hurt model
+    performance at all relative to UV^T, where USV^T = G is the SVD.
+    """
+    assert len(G.shape) == 2
+    a, b, c = (3.4445, -4.7750, 2.0315)
+    X = G.bfloat16()
+    X /= X.norm() + eps  # ensure top singular value <= 1
+    if G.size(0) > G.size(1):
+        X = X.T
+    for _ in range(steps):
+        A = X @ X.T
+        B = b * A + c * A @ A
+        X = a * X + B @ X
+    if G.size(0) > G.size(1):
+        X = X.T
+    return X
+
 
 class Muon(torch.optim.Optimizer):
     """
@@ -40,6 +68,7 @@ class Muon(torch.optim.Optimizer):
         eps=1e-8,
         weight_decay=0.01,
         nesterov=False,
+        ns_steps=6,
         exp_avg_momentum=True,
 
     ):
@@ -52,6 +81,7 @@ class Muon(torch.optim.Optimizer):
             eps=eps,
             weight_decay=weight_decay,
             nesterov=nesterov,
+            ns_steps=ns_steps,
             exp_avg_momentum=exp_avg_momentum,
         )
 
@@ -77,11 +107,12 @@ class Muon(torch.optim.Optimizer):
                 if grad is None:
                     continue
 
-                # remove last weight decay perturbation, 
-                param.data.div_(1 - group["lr"] * group["weight_decay"])
+                # remove last Muon perturbation, 
+                #TODO
+
                 ############################################################
 
-                # do Adam update
+                # do ADAM update
                 og_shape = grad.shape
                 state = self.state[param]
                 if "exp_avg" not in state:
@@ -90,6 +121,9 @@ class Muon(torch.optim.Optimizer):
                     state["step"] = 0
 
                 state["step"] += 1
+
+                if grad.ndim > 2:
+                    grad = grad.view(grad.size(0), -1)
 
                 # momentum update   
                 if group['exp_avg_momentum']:
@@ -102,14 +136,25 @@ class Muon(torch.optim.Optimizer):
                 # exp avg sq update
                 state["exp_avg_sq"].mul_(group["beta2"]).add_(g.pow(2))
 
-                # update and weight decay
+                # adam update
                 denom = state["exp_avg_sq"].sqrt().add_(group["eps"])
-                param.data.addcdiv_(g, denom, value=-group["lr"])
+                param.data.addcdiv_(g, denom, value=group["perturb_lr"])
+                # weight decay
                 param.data.mul_(1 - group["lr"] * group["weight_decay"])
 
                 ############################################################
 
-                # Do weight decay perturbation
-                param.data.mul_(1 - group["lr"] * group["weight_decay"])
+                # Do Muon perturbation
+                # TODO
+
+                # orthogonalization
+                g = zeropower_via_newtonschulz5(g, steps=group["ns_steps"])
+
+                # rescaling
+                g *= max(1, g.size(0)/g.size(1))**0.5
+                g = g.view(og_shape).type_as(param.data)
+
+                # update and weight decay
+                param.data.add_(g, alpha=-group["lr"])
 
 
