@@ -39,8 +39,7 @@ class Muon(torch.optim.Optimizer):
         beta2=0.999,
         eps=1e-8,
         weight_decay=0.01,
-        nesterov=True,
-        ns_steps=6,
+        nesterov=False,
         exp_avg_momentum=True,
 
     ):
@@ -53,7 +52,6 @@ class Muon(torch.optim.Optimizer):
             eps=eps,
             weight_decay=weight_decay,
             nesterov=nesterov,
-            ns_steps=ns_steps,
             exp_avg_momentum=exp_avg_momentum,
         )
 
@@ -79,11 +77,8 @@ class Muon(torch.optim.Optimizer):
                 if grad is None:
                     continue
 
-                # remove last ADAM perturbation, 
-                denom = state["exp_avg_sq"].sqrt().add_(group["eps"])
-                # notice subtle lr is postivie instead of negative 
-                param.addcdiv_(state["exp_avg"], denom, value=group["perturb_lr"])
-
+                # remove last weight decay perturbation, 
+                param.data.div_(1 - group["lr"] * group["weight_decay"])
                 ############################################################
 
                 # do Muon update
@@ -96,9 +91,6 @@ class Muon(torch.optim.Optimizer):
 
                 state["step"] += 1
 
-                if grad.ndim > 2:
-                    grad = grad.view(grad.size(0), -1)
-
                 # momentum update   
                 if group['exp_avg_momentum']:
                     state["exp_avg"].lerp_(g, 1 - group["momentum"])
@@ -110,21 +102,13 @@ class Muon(torch.optim.Optimizer):
                 # exp avg sq update
                 state["exp_avg_sq"].mul_(group["beta2"]).add_(g.pow(2))
 
-                # orthogonalization
-                g = zeropower_via_newtonschulz5(g, steps=group["ns_steps"])
-
-                # rescaling
-                g *= max(1, g.size(0)/g.size(1))**0.5
-                g = g.view(og_shape).type_as(param.data)
-
                 # update and weight decay
-                param.data.add_(g, alpha=-group["lr"])
                 param.data.mul_(1 - group["lr"] * group["weight_decay"])
+                param.data.addcdiv_(state["exp_avg"], denom, value=-group["lr"])
 
                 ############################################################
 
-                # Do adam perturbation
-                denom = state["exp_avg_sq"].sqrt().add_(group["eps"])
-                param.data.addcdiv_(state["exp_avg"], denom, value=-group["perturb_lr"])
+                # Do weight decay perturbation
+                param.data.mul_(1 - group["lr"] * group["weight_decay"])
 
 
