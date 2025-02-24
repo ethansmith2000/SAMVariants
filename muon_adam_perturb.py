@@ -72,6 +72,7 @@ class Muon(BaseOptimizer):
         weight_decay=0.01,
         nesterov=True,
         ns_steps=6,
+        exp_avg_momentum=True,
 
     ):
         perturb_lr = perturb_lr or lr
@@ -84,21 +85,10 @@ class Muon(BaseOptimizer):
             weight_decay=weight_decay,
             nesterov=nesterov,
             ns_steps=ns_steps,
+            exp_avg_momentum=exp_avg_momentum,
         )
 
         super().__init__(params, defaults)
-
-    def _init_state(self, state, param, grad, group):
-        temp = param
-        if param.ndim > 2:
-            temp = param.view(param.size(0), -1)
-
-        if state["use_muon"] == 1:
-            if "exp_avg" not in state:
-                state["exp_avg"] = torch.zeros_like(temp, memory_format=torch.preserve_format, dtype=self.state_dtype)
-        else:
-            state["exp_avg"] = torch.zeros_like(temp, memory_format=torch.preserve_format, dtype=self.state_dtype)
-            state["exp_avg_sq"] = torch.zeros_like(temp, memory_format=torch.preserve_format, dtype=self.state_dtype)
 
     @torch.no_grad()
     def step(self, param, closure=None):
@@ -124,6 +114,8 @@ class Muon(BaseOptimizer):
                 denom = state["exp_avg_sq"].sqrt().add_(group["eps"])
                 # notice subtle lr is postivie instead of negative 
                 param.addcdiv_(state["exp_avg"], denom, value=group["perturb_lr"])
+
+                ############################################################
 
                 # do Muon update
                 og_shape = grad.shape
@@ -159,6 +151,8 @@ class Muon(BaseOptimizer):
                 # update and weight decay
                 param.data.add_(g, alpha=-group["lr"])
                 param.data.mul_(1 - group["lr"] * group["weight_decay"])
+
+                ############################################################
 
                 # Do adam perturbation
                 denom = state["exp_avg_sq"].sqrt().add_(group["eps"])
