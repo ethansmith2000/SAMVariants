@@ -3,32 +3,7 @@ from typing import Generator
 import torch
 
 
-class Muon(torch.optim.Optimizer):
-    """
-    Muon - MomentUm Orthogonalized by Newton-schulz
-
-    Muon internally runs standard SGD-momentum, and then performs an orthogonalization post-
-    processing step, in which each 2D parameter's update is replaced with the nearest orthogonal
-    matrix. To efficiently orthogonalize each update, we use a Newton-Schulz iteration, which has
-    the advantage that it can be stably run in bfloat16 on the GPU.
-
-    Some warnings:
-    - We believe this optimizer is unlikely to work well for training with small batch size.
-    - We believe it may not work well for finetuning pretrained models, but we haven't tested this.
-
-    Arguments:
-        muon_params: The parameters to be optimized by Muon.
-        lr: The learning rate. The updates will have spectral norm of `lr`. (0.02 is a good default)
-        momentum: The momentum used by the internal SGD. (0.95 is a good default)
-        nesterov: Whether to use Nesterov-style momentum in the internal SGD. (recommended)
-        ns_steps: The number of Newton-Schulz iterations to run. (6 is probably always enough)
-        adamw_params: The parameters to be optimized by AdamW. Any parameters in `muon_params` which are
-        {0, 1}-D or are detected as being the embed or lm_head will be optimized by AdamW as well.
-        adamw_lr: The learning rate for the internal AdamW.
-        adamw_betas: The betas for the internal AdamW.
-        adamw_eps: The epsilon for the internal AdamW.
-        adamw_wd: The weight decay for the internal AdamW.
-    """
+class AdamWeightDecaySAM(torch.optim.Optimizer):
 
     def __init__(
         self,
@@ -39,7 +14,6 @@ class Muon(torch.optim.Optimizer):
         beta2=0.999,
         eps=1e-8,
         weight_decay=0.01,
-        nesterov=False,
         exp_avg_momentum=True,
 
     ):
@@ -51,7 +25,6 @@ class Muon(torch.optim.Optimizer):
             beta2=beta2,
             eps=eps,
             weight_decay=weight_decay,
-            nesterov=nesterov,
             exp_avg_momentum=exp_avg_momentum,
         )
 
@@ -78,7 +51,8 @@ class Muon(torch.optim.Optimizer):
                     continue
 
                 # remove last weight decay perturbation, 
-                param.data.div_(1 - group["lr"] * group["weight_decay"])
+                if "step" in self.state[param] and self.state[param]["step"] > 1:
+                    param.data.div_(1 - group["lr"] * group["weight_decay"])
                 ############################################################
 
                 # do Adam update
@@ -94,17 +68,15 @@ class Muon(torch.optim.Optimizer):
                 # momentum update   
                 if group['exp_avg_momentum']:
                     state["exp_avg"].lerp_(grad, 1 - group["momentum"])
-                    exp_avg = grad.lerp(state["exp_avg"], group["momentum"]) if group["nesterov"] else state["exp_avg"]
                 else:
                     state["exp_avg"].mul_(group["momentum"]).add_(grad)
-                    exp_avg = grad.add(state["exp_avg"], alpha=group["momentum"]) if group["nesterov"] else state["exp_avg"]
 
                 # exp avg sq update
                 state["exp_avg_sq"].mul_(group["beta2"]).add_(grad.pow(2))
 
                 # update and weight decay
                 denom = state["exp_avg_sq"].sqrt().add_(group["eps"])
-                param.data.addcdiv_(exp_avg, denom, value=-group["lr"])
+                param.data.addcdiv_(state["exp_avg"], denom, value=-group["lr"])
                 param.data.mul_(1 - group["lr"] * group["weight_decay"])
 
                 ############################################################
