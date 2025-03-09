@@ -11,12 +11,12 @@ class AdamTwoMomentumSAM(torch.optim.Optimizer):
         lr=0.02,
         perturb_lr=None,
         beta1=0.95,
-        beta1_perturb=0.90,
+        beta1_perturb=0.80,
         beta2=0.999,
         eps=1e-8,
         weight_decay=0.01,
         exp_avg_momentum=True,
-        nesterov=False
+        nesterov=False,
     ):
         perturb_lr = perturb_lr or lr
         defaults = dict(
@@ -53,7 +53,9 @@ class AdamTwoMomentumSAM(torch.optim.Optimizer):
                 if grad is None:
                     continue
 
-                if "step" in self.state[param] and self.state[param]["step"] > 1:
+                state = self.state[param]
+
+                if "step" in state and state["step"] > 1:
                     # remove last weight decay perturbation
                     denom = state["exp_avg_sq"].sqrt().add_(group["eps"])
                     param.data.addcdiv_(grad, denom, value=-group["lr"])
@@ -61,7 +63,6 @@ class AdamTwoMomentumSAM(torch.optim.Optimizer):
 
                 # do Adam update
                 og_shape = grad.shape
-                state = self.state[param]
                 if "exp_avg" not in state:
                     state["exp_avg"] = torch.zeros_like(grad)
                     state["exp_avg_perturb"] = torch.zeros_like(grad)
@@ -82,7 +83,7 @@ class AdamTwoMomentumSAM(torch.optim.Optimizer):
                 state["exp_avg_sq"].mul_(group["beta2"]).add_(grad.pow(2))
 
                 update = grad.lerp_(state["exp_avg"], group["beta1"]) if group["nesterov"] else state["exp_avg"]
-                
+
                 # update
                 denom = state["exp_avg_sq"].sqrt().add_(group["eps"])
                 param.data.addcdiv_(update, denom, value=-group["lr"])
