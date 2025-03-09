@@ -75,9 +75,9 @@ class AdamMuonSAM(torch.optim.Optimizer):
 
                 # momentum update   
                 if group['exp_avg_momentum']:
-                    state["exp_avg"].lerp_(grad, 1 - group["momentum"])
+                    state["exp_avg"].lerp_(grad, 1 - group["beta1"])
                 else:
-                    state["exp_avg"].mul_(group["momentum"]).add_(grad)
+                    state["exp_avg"].mul_(group["beta1"]).add_(grad)
 
                 # exp avg sq update
                 state["exp_avg_sq"].mul_(group["beta2"]).add_(grad.pow(2))
