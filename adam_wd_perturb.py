@@ -31,7 +31,7 @@ class AdamWeightDecaySAM(torch.optim.Optimizer):
         super().__init__(params, defaults)
 
     @torch.no_grad()
-    def step(self, param, closure=None):
+    def step(self, closure=None):
         """Perform a single optimization step.
 
         Args:
