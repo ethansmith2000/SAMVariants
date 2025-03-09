@@ -27,6 +27,7 @@ class AdamTwoMomentumSAM(torch.optim.Optimizer):
             eps=eps,
             weight_decay=weight_decay,
             exp_avg_momentum=exp_avg_momentum,
+            beta1_perturb=beta1_perturb,
         )
 
         super().__init__(params, defaults)
@@ -70,11 +71,11 @@ class AdamTwoMomentumSAM(torch.optim.Optimizer):
 
                 # momentum update   
                 if group['exp_avg_momentum']:
-                    state["exp_avg"].lerp_(grad, 1 - group["momentum"])
-                    state["exp_avg_perturb"].lerp_(grad, 1 - group["momentum"])
+                    state["exp_avg"].lerp_(grad, 1 - group["beta1"])
+                    state["exp_avg_perturb"].lerp_(grad, 1 - group["beta1_perturb"])
                 else:
-                    state["exp_avg"].mul_(group["momentum"]).add_(grad)
-                    state["exp_avg_perturb"].mul_(group["momentum"]).add_(grad)
+                    state["exp_avg"].mul_(group["beta1"]).add_(grad)
+                    state["exp_avg_perturb"].mul_(group["beta1_perturb"]).add_(grad)
 
                 # exp avg sq update
                 state["exp_avg_sq"].mul_(group["beta2"]).add_(grad.pow(2))
