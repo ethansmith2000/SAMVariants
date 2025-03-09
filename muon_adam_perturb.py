@@ -19,7 +19,7 @@ class MuoAdamSAM(torch.optim.Optimizer):
         weight_decay=0.01,
         ns_steps=6,
         exp_avg_momentum=True,
-
+        nesterov=False,
     ):
         perturb_lr = perturb_lr or lr
         defaults = dict(
@@ -31,6 +31,7 @@ class MuoAdamSAM(torch.optim.Optimizer):
             weight_decay=weight_decay,
             ns_steps=ns_steps,
             exp_avg_momentum=exp_avg_momentum,
+            nesterov=nesterov
         )
 
         super().__init__(params, defaults)
@@ -84,8 +85,10 @@ class MuoAdamSAM(torch.optim.Optimizer):
                 # exp avg sq update
                 state["exp_avg_sq"].mul_(group["beta2"]).add_(grad.pow(2))
 
+                update = grad.lerp_(state["exp_avg"], group["beta1"]) if group["nesterov"] else state["exp_avg"]
+
                 # orthogonalization
-                g = zeropower_via_newtonschulz5(state["exp_avg"], steps=group["ns_steps"])
+                g = zeropower_via_newtonschulz5(update, steps=group["ns_steps"])
 
                 # rescaling
                 g *= max(1, g.size(0)/g.size(1))**0.5
