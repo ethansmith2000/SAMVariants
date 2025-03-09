@@ -6,20 +6,20 @@ import torch
 
 
 
-class AdamMuonSAM(torch.optim.Optimizer):
+class MuoAdamSAM(torch.optim.Optimizer):
 
     def __init__(
         self,
         params,
-        lr=0.02,
-        perturb_lr=None,
+        lr=1e-3,
+        perturb_lr=1e-4,
         beta1=0.95,
         beta2=0.999,
         eps=1e-8,
         weight_decay=0.01,
         ns_steps=6,
         exp_avg_momentum=True,
-
+        nesterov=True,
     ):
         perturb_lr = perturb_lr or lr
         defaults = dict(
@@ -31,6 +31,7 @@ class AdamMuonSAM(torch.optim.Optimizer):
             weight_decay=weight_decay,
             ns_steps=ns_steps,
             exp_avg_momentum=exp_avg_momentum,
+            nesterov=nesterov,
         )
 
         super().__init__(params, defaults)
@@ -55,23 +56,23 @@ class AdamMuonSAM(torch.optim.Optimizer):
                 if grad is None:
                     continue
 
-                # remove last Muon perturbation, 
-                #TODO
+                state = self.state[param]
+
+                if "step" in state and state["step"] > 1:
+                    # remove last ADAM perturbation,
+                    denom = state["exp_avg_sq"].sqrt().add_(group["eps"])
+                    param.addcdiv_(state["exp_avg"], denom, value=group["perturb_lr"])
 
                 ############################################################
 
-                # do ADAM update
+                # do Muon update
                 og_shape = grad.shape
-                state = self.state[param]
                 if "exp_avg" not in state:
                     state["exp_avg"] = torch.zeros_like(grad)
                     state["exp_avg_sq"] = torch.zeros_like(grad)
                     state["step"] = 0
 
                 state["step"] += 1
-
-                if grad.ndim > 2:
-                    grad = grad.view(grad.size(0), -1)
 
                 # momentum update   
                 if group['exp_avg_momentum']:
@@ -82,20 +83,14 @@ class AdamMuonSAM(torch.optim.Optimizer):
                 # exp avg sq update
                 state["exp_avg_sq"].mul_(group["beta2"]).add_(grad.pow(2))
 
-                # adam update
-                denom = state["exp_avg_sq"].sqrt().add_(group["eps"])
-                param.data.addcdiv_(state["exp_avg"], denom, value=group["perturb_lr"])
+                update = grad.lerp_(state["exp_avg"], group["beta1"]) if group["nesterov"] else state["exp_avg"]
 
-                # weight decay
-                param.data.mul_(1 - group["lr"] * group["weight_decay"])
-
-                ############################################################
-
-                # Do Muon perturbation
-                # TODO
+                #TODO, we're currently preconditioning biases
+                if update.ndim != 2:
+                    update = update.view(update.size(0), -1)
 
                 # orthogonalization
-                g = zeropower_via_newtonschulz5(state["exp_avg"], steps=group["ns_steps"])
+                g = zeropower_via_newtonschulz5(update, steps=group["ns_steps"])
 
                 # rescaling
                 g *= max(1, g.size(0)/g.size(1))**0.5
@@ -103,5 +98,13 @@ class AdamMuonSAM(torch.optim.Optimizer):
 
                 # update and weight decay
                 param.data.add_(g, alpha=-group["lr"])
+                param.data.mul_(1 - group["lr"] * group["weight_decay"])
+
+                ############################################################
+
+                # Do adam perturbation
+                denom = state["exp_avg_sq"].sqrt().add_(group["eps"])
+                # notice subtle lr is postivie instead of negative 
+                param.data.addcdiv_(state["exp_avg"], denom, value=group["perturb_lr"])
 
 
