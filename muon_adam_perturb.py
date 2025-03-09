@@ -6,7 +6,7 @@ import torch
 
 
 
-class MuoAdamSAM(torch.optim.Optimizer):
+class MuonAdamSAM(torch.optim.Optimizer):
 
     def __init__(
         self,
