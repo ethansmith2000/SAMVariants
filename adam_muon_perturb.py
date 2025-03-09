@@ -4,8 +4,6 @@ import torch
 
 # https://github.com/KellerJordan/Muon/blob/master/muon.py
 
-
-
 class MuoAdamSAM(torch.optim.Optimizer):
 
     def __init__(
