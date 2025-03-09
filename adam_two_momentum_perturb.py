@@ -16,7 +16,7 @@ class AdamTwoMomentumSAM(torch.optim.Optimizer):
         eps=1e-8,
         weight_decay=0.01,
         exp_avg_momentum=True,
-
+        nesterov=False
     ):
         perturb_lr = perturb_lr or lr
         defaults = dict(
@@ -28,6 +28,7 @@ class AdamTwoMomentumSAM(torch.optim.Optimizer):
             weight_decay=weight_decay,
             exp_avg_momentum=exp_avg_momentum,
             beta1_perturb=beta1_perturb,
+            nesterov=nesterov
         )
 
         super().__init__(params, defaults)
@@ -80,9 +81,11 @@ class AdamTwoMomentumSAM(torch.optim.Optimizer):
                 # exp avg sq update
                 state["exp_avg_sq"].mul_(group["beta2"]).add_(grad.pow(2))
 
+                update = grad.lerp_(state["exp_avg"], group["beta1"]) if group["nesterov"] else state["exp_avg"]
+                
                 # update
                 denom = state["exp_avg_sq"].sqrt().add_(group["eps"])
-                param.data.addcdiv_(state["exp_avg"], denom, value=-group["lr"])
+                param.data.addcdiv_(update, denom, value=-group["lr"])
 
                 # weight decay
                 param.data.mul_(1 - group["lr"] * group["weight_decay"])
