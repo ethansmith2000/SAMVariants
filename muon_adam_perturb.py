@@ -58,6 +58,10 @@ class MuonAdamSAM(torch.optim.Optimizer):
 
                 state = self.state[param]
 
+                og_shape = grad.shape
+                if grad.ndim != 2:
+                    grad = grad.view(grad.size(0), -1)
+
                 if "exp_avg" not in state:
                     state["exp_avg"] = torch.zeros_like(grad)
                     state["exp_avg_sq"] = torch.zeros_like(grad)
@@ -74,14 +78,9 @@ class MuonAdamSAM(torch.optim.Optimizer):
                     # remove last ADAM perturbation, 
                     perturb_lr = group["lr"] * group["perturb_lr_ratio"]
                     denom = state["exp_avg_sq"].sqrt().add_(group["eps"])
-                    param.addcdiv_(state["exp_avg"], denom, value=-perturb_lr/scale)
+                    param.addcdiv_(state["exp_avg"].squeeze(), denom.squeeze(), value=-perturb_lr/scale)
 
                 ############################################################
-
-                # do Muon update
-                og_shape = grad.shape
-                if grad.ndim > 2:
-                    grad = grad.view(grad.size(0), -1)
 
                 # momentum update   
                 if group['exp_avg_momentum']:
@@ -111,6 +110,6 @@ class MuonAdamSAM(torch.optim.Optimizer):
                 denom = state["exp_avg_sq"].sqrt().add_(group["eps"])
                 # notice subtle lr is postivie instead of negative 
                 perturb_lr = group["lr"] * group["perturb_lr_ratio"]
-                param.data.addcdiv_(state["exp_avg"], denom, value=perturb_lr/scale)
+                param.data.addcdiv_(state["exp_avg"].squeeze(), denom.squeeze(), value=perturb_lr/scale)
 
 

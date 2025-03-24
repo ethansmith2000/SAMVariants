@@ -53,15 +53,15 @@ class Muon(torch.optim.Optimizer):
 
                 # do Muon update
                 og_shape = grad.shape
+                if grad.ndim != 2:
+                    grad = grad.view(grad.size(0), -1)
+
                 state = self.state[param]
                 if "exp_avg" not in state:
                     state["exp_avg"] = torch.zeros_like(grad)
                     state["step"] = 0
 
                 state["step"] += 1
-
-                if grad.ndim > 2:
-                    grad = grad.view(grad.size(0), -1)
 
                 # momentum update   
                 if group['exp_avg_momentum']:
