@@ -13,7 +13,6 @@ class Muon(torch.optim.Optimizer):
         params,
         lr=0.02,
         beta1=0.95,
-        beta2=0.999,
         eps=1e-8,
         weight_decay=0.01,
         ns_steps=6,
@@ -23,7 +22,6 @@ class Muon(torch.optim.Optimizer):
         defaults = dict(
             lr=lr,
             beta1=beta1,
-            beta2=beta2,
             eps=eps,
             weight_decay=weight_decay,
             ns_steps=ns_steps,
@@ -67,9 +65,9 @@ class Muon(torch.optim.Optimizer):
 
                 # momentum update   
                 if group['exp_avg_momentum']:
-                    state["exp_avg"].lerp_(grad, 1 - group["momentum"])
+                    state["exp_avg"].lerp_(grad, 1 - group["beta1"])
                 else:
-                    state["exp_avg"].mul_(group["momentum"]).add_(grad)
+                    state["exp_avg"].mul_(group["beta1"]).add_(grad)
 
                 update = grad.lerp_(state["exp_avg"], group["beta1"]) if group["nesterov"] else state["exp_avg"]
 
