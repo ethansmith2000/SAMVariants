@@ -1,0 +1,5 @@
+__pycache__/
+model-output
+slurm_logs
+sweep_configs
+wandb
