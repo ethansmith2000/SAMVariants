@@ -97,7 +97,7 @@ from transformers import (
 from types import SimpleNamespace
 
 import time
-from adam_muon_perturb import HybridSAM
+from hybrid_sam import HybridSAM
 from muon import Muon
 from transformer import Transformer
 
@@ -128,7 +128,15 @@ def _build_run_name(args: dict[str, Any]) -> str:
     if override_name:
         return override_name
 
-    pass
+    parts = [str(args["mode"])]
+    if str(args["mode"]).lower() in {"hybrid_sam", "adam_muon_perturb"}:
+        parts += [
+            args["hybrid_sam_ascent"],
+            args["hybrid_sam_descent"],
+            f"rho{args['hybrid_sam_rho']}",
+        ]
+    parts.append(time.strftime("%m%d_%H%M%S"))
+    return "-".join(parts)
 
 
 def _config_fingerprint(args: dict[str, Any]) -> str:
@@ -180,10 +188,13 @@ def _build_optimizer(args, model, optimizer_grouped_parameters):
             weight_decay=args.weight_decay,
             ns_steps=args.muon_ns_steps,
             nesterov=args.muon_nesterov,
+            ascent_beta1=args.hybrid_sam_ascent_beta1,
+            perturbation_start_step=args.hybrid_sam_perturbation_start_step,
             normalize_perturbation=args.hybrid_sam_normalize_perturbation,
             perturbation_norm=args.hybrid_sam_perturbation_norm,
             muon_max_dim=args.muon_max_dim,
             muon_fallback_ascent=args.hybrid_sam_muon_fallback_ascent,
+            track_stats=args.hybrid_sam_track_stats,
         )
 
     raise ValueError(f"Unsupported optimizer mode: {args.mode}")
@@ -191,6 +202,20 @@ def _build_optimizer(args, model, optimizer_grouped_parameters):
 
 def _unwrap_optimizer(optimizer):
     return getattr(optimizer, "optimizer", optimizer)
+
+
+def _run_validation(model, eval_dataloader, accelerator, args):
+    model.eval()
+    losses = []
+    for step, batch in enumerate(eval_dataloader):
+        with torch.no_grad():
+            input_ids = batch["input_ids"].to(accelerator.device)[:, :-1]
+            targets = batch["labels"].to(accelerator.device)[:, 1:]
+            loss, logits = model(input_ids=input_ids, targets=targets)
+        losses.append(accelerator.gather_for_metrics(loss.repeat(args.per_device_train_batch_size)))
+        if args.num_validation_batches is not None and step >= args.num_validation_batches:
+            break
+    return torch.mean(torch.cat(losses))
 
 
 def _get_optimizer_lrs(optimizer):
@@ -255,9 +280,13 @@ def main():
         "hybrid_sam_rho": 1.0,
         "hybrid_sam_ascent": "muon",
         "hybrid_sam_descent": "adam",
+        "hybrid_sam_ascent_beta1": None,
+        "hybrid_sam_perturbation_start_step": 0,
         "hybrid_sam_normalize_perturbation": True,
-        "hybrid_sam_perturbation_norm": "global",
+        "hybrid_sam_perturbation_norm": "balanced",
         "hybrid_sam_muon_fallback_ascent": "skip",
+        "hybrid_sam_track_stats": True,
+        "eval_perturbed": True,
 
         "compile": True,
         "compile_mode": "reduce-overhead",
@@ -719,10 +748,12 @@ def main():
                 mini_logs["timer/optimizer_ms"] = optimizer_time
                 mini_logs["timer/step_ms"] = step_start.elapsed_time(step_end)
                 
-                # Log update norm if the optimizer exposes it.
+                # Log update norm / perturbation stats if the optimizer exposes them.
                 opt = getattr(optimizer, "optimizer", optimizer)
                 if hasattr(opt, "last_update_norm"):
                     mini_logs["optim/update_norm"] = opt.last_update_norm
+                if getattr(opt, "last_stats", None):
+                    mini_logs.update({f"optim/{k}": v for k, v in opt.last_stats.items()})
 
                 if (
                     args.log_params_every_n is not None
@@ -752,21 +783,17 @@ def main():
 
             
             if completed_steps % args.validate_every == 0:
-                model.eval()
-                losses = []
-                for step, batch in enumerate(eval_dataloader):
-                    with torch.no_grad():
-                        input_ids = batch["input_ids"].to(accelerator.device)[:, :-1]
-                        targets = batch["labels"].to(accelerator.device)[:, 1:]
-                        loss, logits = model(input_ids=input_ids, targets=targets)
-                    losses.append(accelerator.gather_for_metrics(loss.repeat(args.per_device_train_batch_size)))
-                    if args.num_validation_batches is not None:
-                        if step >= args.num_validation_batches:
-                            break
+                # Between steps params hold the perturbed weights w̃; always
+                # evaluate at the clean iterate w so comparisons against
+                # non-SAM baselines are apples-to-apples.
+                opt = _unwrap_optimizer(optimizer)
+                if hasattr(opt, "unperturbed"):
+                    with opt.unperturbed():
+                        eval_loss = _run_validation(model, eval_dataloader, accelerator, args)
+                else:
+                    eval_loss = _run_validation(model, eval_dataloader, accelerator, args)
 
-                losses = torch.cat(losses)
                 try:
-                    eval_loss = torch.mean(losses)
                     perplexity = math.exp(eval_loss)
                 except OverflowError:
                     perplexity = float("inf")
@@ -774,16 +801,19 @@ def main():
                 logger.info(f"epoch {epoch}: perplexity: {perplexity} eval_loss: {eval_loss}")
 
                 if args.with_tracking:
-                    accelerator.log(
-                        {
-                            "perplexity": perplexity,
-                            "eval_loss": eval_loss,
-                            "train_loss": total_loss.item() / len(train_dataloader),
-                            "epoch": epoch,
-                            "step": completed_steps,
-                        },
-                        step=completed_steps,
-                    )
+                    eval_logs = {
+                        "perplexity": perplexity,
+                        "eval_loss": eval_loss,
+                        "train_loss": total_loss.item() / len(train_dataloader),
+                        "epoch": epoch,
+                        "step": completed_steps,
+                    }
+                    # Second pass at w̃: loss(w̃) - loss(w) is a free sharpness probe
+                    if args.eval_perturbed and hasattr(opt, "unperturbed"):
+                        eval_loss_perturbed = _run_validation(model, eval_dataloader, accelerator, args)
+                        eval_logs["eval_loss_perturbed"] = eval_loss_perturbed
+                        eval_logs["eval_sam_gap"] = eval_loss_perturbed - eval_loss
+                    accelerator.log(eval_logs, step=completed_steps)
 
         if args.checkpointing_steps == "epoch":
             output_dir = f"epoch_{epoch}"
@@ -793,6 +823,12 @@ def main():
 
     if args.with_tracking:
         accelerator.end_training()
+
+    # Training is done: permanently move back to the clean iterate w before
+    # saving (the shipped weights should never include the SAM perturbation).
+    final_opt = _unwrap_optimizer(optimizer)
+    if hasattr(final_opt, "remove_perturbation"):
+        final_opt.remove_perturbation()
 
     if args.output_dir is not None:
         accelerator.wait_for_everyone()

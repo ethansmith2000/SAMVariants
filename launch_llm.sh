@@ -33,9 +33,18 @@ MUON_LR="6.0e-3"
 MUON_BETA1="0.95"
 MUON_NS_STEPS=6
 MUON_MAX_DIM=16384
-HYBRID_PERTURBATION_NORM="global"
-HYBRID_MUON_FALLBACK_ASCENT="adam"
-HYBRID_RHOS=("0.1" "0.3" "0.55" "1.0" "1.7")
+# "balanced": per-param unit directions scaled by sqrt(numel_p/total), total
+# norm = rho. A raw "global" norm lets adam-fallback params (embeddings) absorb
+# >99% of the budget when mixed with muon directions — don't use it for mixed
+# ascent modes.
+HYBRID_PERTURBATION_NORM="balanced"
+HYBRID_MUON_FALLBACK_ASCENT="skip"
+# rho > 0 = MSAM-style lookahead (perturb along the update direction);
+# rho < 0 = classic SAM-style ascent. Sweep both signs — it's the cheapest,
+# most decisive ablation for which mechanism is doing the work.
+HYBRID_RHOS=("-1.0" "-0.3" "-0.1" "0.1" "0.3" "1.0")
+# Matches MSAM's rho=0-during-warmup recommendation
+HYBRID_PERTURBATION_START_STEP=100
 
 # Model config: "hidden_size depth n_head lr batch_size max_train_steps"
 MODEL_CONFIG="1024 12 8 4.0e-4 32 250000"
@@ -95,12 +104,17 @@ EOF
 # by train_gpt.py for those modes. Keeping every config structurally identical
 # makes it easier to diff runs after launch.
 optimizer_configs=(
+  # Baselines. muon-nesterov is the honest control for rho>0 (MSAM-sign)
+  # perturbations: those are lookahead-flavored, and nesterov is the cheap
+  # built-in version of lookahead.
   # "adamw adamw 0.0 muon adam false true"
   "muon muon 0.0 muon muon false true"
+  "muon-nesterov muon 0.0 muon muon true true"
 )
 
 for rho in "${HYBRID_RHOS[@]}"; do
   rho_label="${rho//./p}"
+  rho_label="${rho_label//-/n}"
   # optimizer_configs+=("msam-adamw-rho${rho_label} hybrid_sam ${rho} momentum adam false true")
   # optimizer_configs+=("adam-sam-adam-rho${rho_label} hybrid_sam ${rho} adam adam false true")
   # optimizer_configs+=("hybrid-sam-muon-adam-rho${rho_label} hybrid_sam ${rho} muon adam false true")
@@ -132,6 +146,9 @@ for config in "${optimizer_configs[@]}"; do
   "hybrid_sam_normalize_perturbation": ${normalize_perturbation},
   "hybrid_sam_perturbation_norm": "${HYBRID_PERTURBATION_NORM}",
   "hybrid_sam_muon_fallback_ascent": "${HYBRID_MUON_FALLBACK_ASCENT}",
+  "hybrid_sam_perturbation_start_step": ${HYBRID_PERTURBATION_START_STEP},
+  "hybrid_sam_track_stats": true,
+  "eval_perturbed": true,
   "per_device_train_batch_size": ${BATCH_SIZE},
   "max_train_steps": ${MAX_TRAIN_STEPS},
   "lr_scheduler_type": "${LR_SCHEDULER_TYPE}",
