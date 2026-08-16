@@ -68,7 +68,9 @@ class Muon(torch.optim.Optimizer):
                 state = self.state[param]
                 if "exp_avg" not in state:
                     state["exp_avg"] = torch.zeros_like(grad)
-                    state["exp_avg_sq"] = torch.zeros_like(grad)
+                    # exp_avg_sq only needed on the Adam fallback path
+                    if not self._use_muon(param, group):
+                        state["exp_avg_sq"] = torch.zeros_like(grad)
                     state["step"] = 0
 
                 state["step"] += 1
@@ -87,7 +89,7 @@ class Muon(torch.optim.Optimizer):
                     )
 
                     # orthogonalization
-                    g = zeropower_via_newtonschulz5(update.clone(), steps=group["ns_steps"])
+                    g = zeropower_via_newtonschulz5(update, steps=group["ns_steps"])
 
                     # rescaling
                     g *= max(1, g.size(0)/g.size(1))**0.5
