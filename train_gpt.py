@@ -618,6 +618,16 @@ def main():
     perplexity = float("nan")
     
 
+    # "auto": resume from the latest step_* checkpoint in output_dir if any
+    # exist, else start fresh. Makes interrupted runs restart-safe.
+    if args.resume_from_checkpoint == "auto":
+        ckpts = []
+        if args.output_dir and os.path.isdir(args.output_dir):
+            for entry in os.scandir(args.output_dir):
+                if entry.is_dir() and entry.name.startswith("step_"):
+                    ckpts.append((int(entry.name.split("_")[1]), entry.path))
+        args.resume_from_checkpoint = max(ckpts)[1] if ckpts else None
+
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
         if args.resume_from_checkpoint is not None or args.resume_from_checkpoint != "":

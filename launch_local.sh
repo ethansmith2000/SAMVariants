@@ -44,11 +44,17 @@ for cfg in "$@"; do
   fi
   stem="$(basename "${cfg}" .json)"
   echo "[gpu ${gpu}] ${stem}"
-  CUDA_VISIBLE_DEVICES=${gpu} nohup python "${SCRIPT_DIR}/train_gpt.py" \
+  # Per-run compile caches: concurrent first-compiles sharing one
+  # inductor/triton cache contend on its file locks and can hang.
+  CUDA_VISIBLE_DEVICES=${gpu} \
+  TORCHINDUCTOR_CACHE_DIR="/tmp/inductor_cache_${stem}" \
+  TRITON_CACHE_DIR="/tmp/triton_cache_${stem}" \
+  nohup python "${SCRIPT_DIR}/train_gpt.py" \
     --override_json "${cfg}" > "${LOG_DIR}/${stem}.log" 2>&1 &
-  gpu_pid[$gpu]=$!
-  echo "${gpu_pid[$gpu]}" > "${LOG_DIR}/${stem}.pid"
+  gpu_pid[$slot]=$!
+  echo "${gpu_pid[$slot]}" > "${LOG_DIR}/${stem}.pid"
   i=$(( i + 1 ))
+  sleep 15   # stagger startups (dataset mmap + wandb init thundering herd)
 done
 
 echo "all launched; waiting for completion..."
