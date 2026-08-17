@@ -63,7 +63,8 @@ def main():
         desc=f"Tokenize + group into {block_size}",
     )
     print({split: len(ds) for split, ds in lm.items()})
-    lm.save_to_disk(args.out)
+    # num_proc: single-writer saves of a ~70GB dataset take hours
+    lm.save_to_disk(args.out, num_proc=min(args.num_proc, 32))
     print(f"saved to {args.out}")
 
 
