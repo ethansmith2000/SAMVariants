@@ -798,7 +798,18 @@ def main():
                 except OverflowError:
                     perplexity = float("inf")
 
-                logger.info(f"epoch {epoch}: perplexity: {perplexity} eval_loss: {eval_loss}")
+                # Second pass at w̃: loss(w̃) - loss(w) is a free sharpness probe
+                eval_loss_perturbed = None
+                if args.eval_perturbed and hasattr(opt, "unperturbed"):
+                    eval_loss_perturbed = _run_validation(model, eval_dataloader, accelerator, args)
+
+                msg = f"epoch {epoch}: perplexity: {perplexity} eval_loss: {eval_loss}"
+                if eval_loss_perturbed is not None:
+                    msg += (
+                        f" eval_loss_perturbed: {eval_loss_perturbed}"
+                        f" sam_gap: {eval_loss_perturbed - eval_loss}"
+                    )
+                logger.info(msg)
 
                 if args.with_tracking:
                     eval_logs = {
@@ -808,9 +819,7 @@ def main():
                         "epoch": epoch,
                         "step": completed_steps,
                     }
-                    # Second pass at w̃: loss(w̃) - loss(w) is a free sharpness probe
-                    if args.eval_perturbed and hasattr(opt, "unperturbed"):
-                        eval_loss_perturbed = _run_validation(model, eval_dataloader, accelerator, args)
+                    if eval_loss_perturbed is not None:
                         eval_logs["eval_loss_perturbed"] = eval_loss_perturbed
                         eval_logs["eval_sam_gap"] = eval_loss_perturbed - eval_loss
                     accelerator.log(eval_logs, step=completed_steps)

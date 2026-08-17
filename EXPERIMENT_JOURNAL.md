@@ -92,6 +92,24 @@ Full review of the codebase (Claude), verified against the MSAM reference implem
   no-leak on grad-None, start-step gating, ascent_beta1, state_dict resume, lazy second moment,
   stats.
 
+## 2026-08-17 — harness validated end-to-end (local A/A anchors)
+
+Ran the full train_gpt.py pipeline locally on the Vast box (8×RTX 5090, shared with other
+jobs — use `launch_local.sh`, which picks GPUs; `GPUS="..."` restricts the set): wikitext-2,
+512-dim/6-layer model, bs 8, 200 steps, evals every 50.
+
+- **A/A anchor PASSED**: `hybrid_sam` muon→muon ρ=0 matches the Muon baseline to ~1e-4
+  eval loss across all evals (GPU nondeterminism noise); `sam_gap` exactly 0.0 at ρ=0.
+- **ρ=0.5 smoke**: perturbation/stats/gap machinery works. `sam_gap` came out small and
+  *negative* (−0.002 → −0.0003 nats over training): the MSAM-sign perturbation locally
+  lowers loss early on. Also note the gap magnitude ⇒ balanced-norm ρ=0.5 is a gentle
+  perturbation; the sweep's ρ range likely needs to extend higher (watch
+  `optim/perturb_norm` vs update norms in the first real runs).
+- `eval_flatness.py` validated on the produced checkpoints (indistinguishable at 200
+  steps, as expected).
+- Gotcha for local runs: dataset name must be `Salesforce/wikitext` (new `datasets`
+  rejects un-namespaced ids); set `TMPDIR` (train_gpt defaults it to a cluster path).
+
 ## Planned experiments (next sweep)
 
 Priority order; all at the 1024×12 config, constant lr, 250k steps unless noted:
