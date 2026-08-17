@@ -230,7 +230,7 @@ def main():
     args = {
         "num_validation_batches": 25,
         "validate_every": 1000,
-        "dataset_name": "openwebtext",
+        "dataset_name": "Skylion007/openwebtext",  # namespaced id required by newer `datasets`
         "dataset_config_name": None,
         # "dataset_name": "wikitext",
         # "dataset_config_name": "wikitext-103-v1",
