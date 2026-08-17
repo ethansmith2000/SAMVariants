@@ -110,6 +110,20 @@ jobs — use `launch_local.sh`, which picks GPUs; `GPUS="..."` restricts the set
 - Gotcha for local runs: dataset name must be `Salesforce/wikitext` (new `datasets`
   rejects un-namespaced ids); set `TMPDIR` (train_gpt defaults it to a cluster path).
 
+## 2026-08-17 — OWT pilot launched (7 runs, 25k steps)
+
+Tokenized OpenWebText into the shared cache `/workspace/data/tokenized/openwebtext_gpt2_1024`
+(8.37M train / 443k val blocks of 1024; `prep_dataset.py`, parallel save). Pilot on the local
+box (wandb `sam-variants-llm`, configs `sweep_configs/pilot-*.json`, `launch_local.sh` over
+GPUs 0,1,3,4,6): muon, muon-nesterov, hybrid muon→muon ρ ∈ {0, +0.3, +1.0, +3.0, −1.0};
+1024×12 geglu, bs 32, constant lr 4e-4 / muon 6e-3, balanced norm, start_step 100,
+`compile_mode: default` (reduce-overhead's cudagraph pools cost ~4GB and OOM'd shared GPUs).
+
+Step-1000 sanity: at-scale A/A PASSED (muon 4.38852 vs hybrid ρ=0 4.38821, sam_gap 0.0);
+ρ=1 shows sam_gap +0.0005 and eval 4.3661. Scale note: balanced ρ=1 ⇒ total perturbation
+norm ≈ half an optimizer step (lr·‖muon dirs‖ ≈ 1.8 globally), so {0.3, 1, 3} spans
+~0.15–1.5 steps of lookahead distance.
+
 ## Planned experiments (next sweep)
 
 Priority order; all at the 1024×12 config, constant lr, 250k steps unless noted:
