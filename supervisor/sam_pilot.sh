@@ -9,7 +9,7 @@ cd /workspace/SAMVariants || exit 1
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export TMPDIR=/tmp
-export GPUS="0,1,3,4,6"
+export GPUS="0,1,3,4,5"
 
 exec ./launch_local.sh \
   sweep_configs/pilot-muon.json \
