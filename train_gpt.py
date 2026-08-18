@@ -209,8 +209,8 @@ def _run_validation(model, eval_dataloader, accelerator, args):
     losses = []
     for step, batch in enumerate(eval_dataloader):
         with torch.no_grad():
-            input_ids = batch["input_ids"].to(accelerator.device)[:, :-1]
-            targets = batch["labels"].to(accelerator.device)[:, 1:]
+            tokens = batch["input_ids"].to(accelerator.device).long()
+            input_ids, targets = tokens[:, :-1], tokens[:, 1:]
             loss, logits = model(input_ids=input_ids, targets=targets)
         losses.append(accelerator.gather_for_metrics(loss.repeat(args.per_device_train_batch_size)))
         if args.num_validation_batches is not None and step >= args.num_validation_batches:
@@ -701,8 +701,10 @@ def main():
                 step_start.record()
                 # Time forward pass
                 forward_start.record()
-                input_ids = batch["input_ids"].to(accelerator.device)[:, :-1]
-                targets = batch["labels"].to(accelerator.device)[:, 1:]
+                # labels are derived from input_ids (next-token shift); the
+                # tokenized dataset stores only int32 input_ids
+                tokens = batch["input_ids"].to(accelerator.device).long()
+                input_ids, targets = tokens[:, :-1], tokens[:, 1:]
 
                 # Check for denoising optimizer (may be wrapped by Accelerator)
                 loss, logits = model(input_ids=input_ids, targets=targets)

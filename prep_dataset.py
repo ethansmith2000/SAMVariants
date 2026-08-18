@@ -13,7 +13,7 @@ usable across projects, e.g.:
 import argparse
 from itertools import chain
 
-from datasets import load_dataset
+from datasets import Sequence, Value, load_dataset
 from transformers import AutoTokenizer
 
 
@@ -44,16 +44,20 @@ def main():
     block_size = args.block_size
 
     def tokenize_and_group(examples):
-        tokenized = tokenizer(examples[text_column])
-        concatenated = {k: list(chain(*tokenized[k])) for k in tokenized.keys()}
-        total_length = len(concatenated[list(tokenized.keys())[0]])
-        total_length = (total_length // block_size) * block_size
-        result = {
-            k: [t[i : i + block_size] for i in range(0, total_length, block_size)]
-            for k, t in concatenated.items()
+        # input_ids only: attention_mask would be all-ones (we concatenate,
+        # never pad) and labels would duplicate input_ids byte-for-byte — the
+        # train loop derives both. Storing just int32 input_ids cuts the
+        # on-disk/cached size ~6x, which keeps the whole dataset in page
+        # cache and avoids random-read IO stalls during training.
+        tokenized = tokenizer(examples[text_column], return_attention_mask=False)
+        concatenated = list(chain(*tokenized["input_ids"]))
+        total_length = (len(concatenated) // block_size) * block_size
+        return {
+            "input_ids": [
+                concatenated[i : i + block_size]
+                for i in range(0, total_length, block_size)
+            ]
         }
-        result["labels"] = result["input_ids"].copy()
-        return result
 
     lm = raw.map(
         tokenize_and_group,
@@ -62,8 +66,9 @@ def main():
         remove_columns=column_names,
         desc=f"Tokenize + group into {block_size}",
     )
+    lm = lm.cast_column("input_ids", Sequence(Value("int32")))
     print({split: len(ds) for split, ds in lm.items()})
-    # num_proc: single-writer saves of a ~70GB dataset take hours
+    # num_proc: single-writer saves of a large dataset take hours
     lm.save_to_disk(args.out, num_proc=min(args.num_proc, 32))
     print(f"saved to {args.out}")
 
