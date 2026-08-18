@@ -17,10 +17,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="${SCRIPT_DIR}/slurm_logs"
 # Restrict to specific GPUs with e.g. GPUS="1,3,7" ./launch_local.sh ...
 # (other jobs may occupy some GPUs — check nvidia-smi first)
+#
+# GPUs are addressed by UUID, not index: CUDA's default device ordering
+# (FASTEST_FIRST) is not guaranteed to match nvidia-smi's PCI ordering or to
+# be consistent across processes — with identical cards, index-based
+# CUDA_VISIBLE_DEVICES can land two jobs on the same physical GPU.
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
 if [[ -n "${GPUS:-}" ]]; then
-  IFS=',' read -ra GPU_LIST <<< "${GPUS}"
+  IFS=',' read -ra GPU_IDX <<< "${GPUS}"
+  GPU_LIST=()
+  for idx in "${GPU_IDX[@]}"; do
+    GPU_LIST+=("$(nvidia-smi --query-gpu=uuid --format=csv,noheader -i "${idx}")")
+  done
 else
-  mapfile -t GPU_LIST < <(nvidia-smi --query-gpu=index --format=csv,noheader)
+  mapfile -t GPU_LIST < <(nvidia-smi --query-gpu=uuid --format=csv,noheader)
 fi
 NUM_GPUS=${#GPU_LIST[@]}
 mkdir -p "${LOG_DIR}"
