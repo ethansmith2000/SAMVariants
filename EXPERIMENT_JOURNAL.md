@@ -175,3 +175,21 @@ Beyond val loss/ppl at matched steps (now correctly at clean w):
 - **Resurrect weight-decay perturbation** as `ascent="weights"` (direction −w) inside HybridSAM
   if ever wanted — it's a one-branch addition, not a separate optimizer.
 - ρ schedule beyond start-step gating is deprioritized: MSAM found ρ∝lr coupling hurts.
+
+## 2026-08-18 — box migration, slim data, gpu-claim integration
+
+Old box died mid-pilot; its auto-commit had pushed everything to GitHub, so no code loss. New
+box (8×5090, shared with the other projects) rebuilt: OWT re-tokenized into the **slim format**
+(int32 input_ids only — attention_mask was all-ones, labels duplicated input_ids; 34GB vs 110GB,
+stays in page cache, kills the random-read IO stalls that throttled the old pilot to 0.16 it/s).
+Train loop derives labels and casts to long.
+
+Launch lessons, learned the hard way: (1) index-based CUDA_VISIBLE_DEVICES is unsafe (CUDA
+FASTEST_FIRST ordering ≠ nvidia-smi PCI order) — pin by UUID with CUDA_DEVICE_ORDER=PCI_BUS_ID;
+(2) this box's projects coordinate GPUs via the shared `gpu-claim` protocol
+(/workspace/GPU_QUEUEING.md) — the pilot service is now a thin queue of
+`gpu-claim run --owner samvariants --job <cfg> --wait` calls, one per config, runs starting
+whenever a GPU frees; (3) never kill `train_gpt.py` by name — other projects use the same
+filename (ComboAdam's trainer was collateral damage twice; it recovered).
+
+Pilot restarted from scratch under the queue (~2 it/s per run when placed → ~3.5h/run).

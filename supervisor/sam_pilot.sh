@@ -1,21 +1,41 @@
 #!/bin/bash
-# SAMVariants OWT pilot: 7 runs via launch_local.sh. Runs auto-resume from
+# SAMVariants OWT pilot queue — every run acquires its GPU through the shared
+# gpu-claim protocol (docs: /workspace/GPU_QUEUEING.md). Each config launches
+# a gpu-claim waiter; runs start whenever a GPU frees up and auto-resume from
 # their latest step_* checkpoint, so restarts (supervisor or container) are
-# cheap. Exits 0 when all runs complete; autorestart=unexpected leaves it
-# stopped after success but relaunches it if the box/container restarts
-# mid-training.
+# cheap. Exits when all runs have finished.
+#
+# Never kill "train_gpt.py" by name on this box — other projects use the same
+# filename. Target /workspace/SAMVariants paths or the job's pid file.
 
 cd /workspace/SAMVariants || exit 1
+source /venv/main/bin/activate
 
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export TMPDIR=/tmp
-export GPUS="0,1,2,3,4,5,6"
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-exec ./launch_local.sh \
-  sweep_configs/pilot-muon.json \
-  sweep_configs/pilot-hybrid-rho1.json \
-  sweep_configs/pilot-hybrid-rho0.json \
-  sweep_configs/pilot-muon-nesterov.json \
-  sweep_configs/pilot-hybrid-rho0p3.json \
-  sweep_configs/pilot-hybrid-rho3.json \
-  sweep_configs/pilot-hybrid-rhon1.json
+CONFIGS=(
+  pilot-muon
+  pilot-hybrid-rho1
+  pilot-hybrid-rho0
+  pilot-muon-nesterov
+  pilot-hybrid-rho0p3
+  pilot-hybrid-rho3
+  pilot-hybrid-rhon1
+)
+
+pids=()
+for name in "${CONFIGS[@]}"; do
+  TORCHINDUCTOR_CACHE_DIR="/tmp/inductor_cache_${name}" \
+  TRITON_CACHE_DIR="/tmp/triton_cache_${name}" \
+  gpu-claim run --owner samvariants --job "${name}" --wait -- \
+    python -u /workspace/SAMVariants/train_gpt.py \
+    --override_json "sweep_configs/${name}.json" \
+    > "slurm_logs/${name}.log" 2>&1 &
+  pids+=($!)
+  echo "queued ${name} (waiter pid $!)"
+  sleep 5
+done
+
+wait "${pids[@]}"
+echo "all pilot runs complete"
