@@ -40,7 +40,7 @@ def load_model(model_dir, device):
 def make_eval_loader(tok_path, batch_size, num_batches):
     lm = datasets.load_from_disk(tok_path)["validation"]
     lm = lm.select(range(min(len(lm), batch_size * num_batches)))
-    lm.set_format(type="torch", columns=["input_ids", "labels"])
+    lm.set_format(type="torch", columns=["input_ids"])
     return DataLoader(lm, batch_size=batch_size, shuffle=False)
 
 
@@ -48,8 +48,8 @@ def make_eval_loader(tok_path, batch_size, num_batches):
 def mean_loss(model, loader, device):
     losses = []
     for batch in loader:
-        input_ids = batch["input_ids"].to(device)[:, :-1]
-        targets = batch["labels"].to(device)[:, 1:]
+        tokens = batch["input_ids"].to(device).long()
+        input_ids, targets = tokens[:, :-1], tokens[:, 1:]
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=device == "cuda"):
             loss, _ = model(input_ids=input_ids, targets=targets)
         losses.append(loss.float())

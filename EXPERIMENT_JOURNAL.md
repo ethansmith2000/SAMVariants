@@ -193,3 +193,41 @@ whenever a GPU frees; (3) never kill `train_gpt.py` by name — other projects u
 filename (ComboAdam's trainer was collateral damage twice; it recovered).
 
 Pilot restarted from scratch under the queue (~2 it/s per run when placed → ~3.5h/run).
+
+## 2026-08-19 — pilot results: lookahead sign wins monotonically; flatness story inverted
+
+All 7 runs completed 25k steps (bs 32×1024, constant lr). Final eval (clean w, 26×32 val batches):
+
+| run | eval loss | ppl | final sam_gap |
+|---|---|---|---|
+| hybrid ρ=+3.0 | **3.3750** | **29.23** | +0.0019 |
+| muon-nesterov | 3.3774 | 29.30 | — |
+| hybrid ρ=+1.0 | 3.3800 | 29.37 | +0.0004 |
+| hybrid ρ=+0.3 | 3.3820 | 29.43 | +0.0001 |
+| muon | 3.3824 | 29.44 | — |
+| hybrid ρ=0 (A/A) | 3.3831 | 29.46 | 0.0 |
+| hybrid ρ=−1.0 | 3.3884 | 29.62 | −0.0005 |
+
+**Findings** (single seed each; margins are small but the *orderings* are clean):
+1. Strictly monotone in ρ: +3 > +1 > +0.3 > 0 ≈ muon > −1. The sign ablation is decisive:
+   MSAM-sign lookahead helps, classic SAM-ascent (ρ<0) hurts.
+2. ρ=3 beats the nesterov control by 0.0024 nats; nesterov beats muon by 0.0050. So ~2/3 of
+   the gain is generic lookahead, ~1/3 is specific to the hybrid perturbation — and best-ρ is
+   at the top of the swept range.
+3. A/A anchor held over 25k steps (ρ=0 vs muon: 7e-4, noise level).
+4. sam_gap is positive for ρ>0, negative for ρ<0, scaling with ρ — consistent with the
+   overshoot interpretation throughout training.
+
+**Flatness probe inverts the naive story** (eval_flatness, relative Gaussian weight noise,
+3 seeds × 20×16 sequential val batches): degradation at σ=0.1 orders almost exactly
+*inversely* to eval performance — ρ=−1 flattest (+0.070), then ρ=0 (+0.079), muon (+0.081),
+ρ=0.3 (+0.086), ρ=1 (+0.096), ρ=3 (+0.104), nesterov sharpest (+0.109). The winners live in
+*sharper* minima by this measure. Mechanism looks optimization-dynamical (extragradient-like)
+rather than flat-minima-geometric. Caveats: small correlated eval subset (its σ=0 ordering
+disagrees with the training eval — trust per-model deltas, not absolutes), one seed per config.
+
+**Next sweep**: extend ρ to {5.6, 10} (win is at the range edge); 3 seeds at {muon, nesterov,
+ρ=3, best-new-ρ} for error bars; ascent_beta1 sweep at best ρ (staleness knob); adam→muon arm;
+flatness with a larger shuffled eval subset + directional (update-dir/ascent-dir) sharpness
+slices, since isotropic noise may be the wrong probe. Dataset note: shared cache was rebuilt as
+`/workspace/data/tokenized/openwebtext_gpt2_bs1024` (slim schema, same script) — use that path.
