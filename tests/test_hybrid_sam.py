@@ -211,6 +211,39 @@ def test_stats_tracking():
     assert stats["cos_perturb_grad"] < -0.9
 
 
+
+
+def test_relative_scale_matches_step_norm():
+    """relative mode: ||eps_p|| == rho * EMA(||descent step of p||) per param."""
+    params = make_params(seed=12, sizes=((8, 8), (32, 8), (16,)))
+    rho = 2.0
+    opt = HybridSAM(params, lr=1e-2, rho=rho, ascent="momentum", descent="adam",
+                    weight_decay=0.0, perturbation_scale="relative")
+    for step in range(5):
+        fake_grads(params, seed=1200 + step)
+        opt.step()
+    for p in params:
+        st = opt.state[p]
+        expected = rho * st["step_norm_ema"].item()
+        assert abs(st["perturb"].norm().item() - expected) < 1e-6 * max(1, expected)
+
+
+def test_relative_scale_tracks_lr():
+    """Doubling lr should (asymptotically) double the perturbation size."""
+    results = {}
+    for lr in (1e-3, 2e-3):
+        params = make_params(seed=13, sizes=((16, 16),))
+        opt = HybridSAM(params, lr=lr, rho=1.0, ascent="momentum", descent="adam",
+                        weight_decay=0.0, perturbation_scale="relative",
+                        step_norm_beta=0.0)  # no smoothing: track current step exactly
+        for step in range(4):
+            fake_grads(params, seed=1300 + step)
+            opt.step()
+        results[lr] = opt.state[params[0]]["perturb"].norm().item()
+    ratio = results[2e-3] / results[1e-3]
+    assert abs(ratio - 2.0) < 0.05, ratio
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

@@ -84,10 +84,21 @@ class HybridSAM(torch.optim.Optimizer):
         perturbation_start_step=0,              # rho=0 until this step (MSAM does this for warmup)
         normalize_perturbation=True,
         perturbation_norm: Literal["per_param", "global", "balanced"] = "balanced",
+        perturbation_scale: Literal["absolute", "relative"] = "absolute",
+        step_norm_beta=0.9,                     # EMA beta for per-param update-norm tracking
         muon_max_dim=16384,
         muon_fallback_ascent: Literal["skip", "momentum", "adam"] = "skip",
         track_stats=False,
     ):
+        # perturbation_scale="relative": ||eps_p|| = |rho| * EMA(||descent step of p||),
+        # i.e. rho is dimensionless — "how many of my own update steps of lookahead".
+        # Comparable across ascent/descent families, optimizers, and model scales
+        # (an absolute budget means a very different relative nudge for a param
+        # that moves 0.2/step than one that moves 0.002/step). Note this couples
+        # perturbation size to lr; under constant lr it is a pure
+        # reparameterization of "absolute", under lr decay it is a distinct
+        # (MSAM-discouraged) choice — treat that as an ablation, not a default.
+        # In relative mode perturbation_norm is ignored.
         muon_lr_mult = 1.0 if muon_lr is None else muon_lr / lr
         defaults = dict(
             lr=lr, muon_lr_mult=muon_lr_mult, rho=rho, ascent=ascent, descent=descent,
@@ -97,6 +108,8 @@ class HybridSAM(torch.optim.Optimizer):
             perturbation_start_step=perturbation_start_step,
             normalize_perturbation=normalize_perturbation,
             perturbation_norm=perturbation_norm,
+            perturbation_scale=perturbation_scale,
+            step_norm_beta=step_norm_beta,
             muon_max_dim=muon_max_dim,
             muon_fallback_ascent=muon_fallback_ascent,
         )
@@ -247,7 +260,13 @@ class HybridSAM(torch.optim.Optimizer):
         family_sq = {}
         for p in pending:
             group, direction = p["group"], p["direction"]
-            if not normalize:
+            if group["perturbation_scale"] == "relative":
+                # rho in units of this param's own (EMA'd) update-step norm
+                scale = (
+                    -group["rho"] * p["state"]["step_norm_ema"]
+                    / direction.norm().clamp_min(eps)
+                )
+            elif not normalize:
                 scale = -group["rho"]
             elif norm_mode == "global":
                 scale = -group["rho"] / global_norm
@@ -315,9 +334,20 @@ class HybridSAM(torch.optim.Optimizer):
 
             # 2. Descent from clean w + decoupled weight decay
             descent_lr = self._descent_lr(param, state, group)
-            param.data.add_(self._descent_direction(param, state, grad, group), alpha=-descent_lr)
+            descent_dir = self._descent_direction(param, state, grad, group)
+            param.data.add_(descent_dir, alpha=-descent_lr)
             if group["weight_decay"] != 0:
                 param.data.mul_(1 - descent_lr * group["weight_decay"])
+
+            # Track ||actual update|| per param for relative perturbation scaling
+            if group["perturbation_scale"] == "relative":
+                step_norm = (descent_lr * descent_dir.norm()).detach()
+                if "step_norm_ema" not in state:
+                    state["step_norm_ema"] = step_norm
+                else:
+                    state["step_norm_ema"] = state["step_norm_ema"].lerp(
+                        step_norm, 1 - group["step_norm_beta"]
+                    )
 
             items.append({"group": group, "param": param, "state": state, "grad": grad})
 
