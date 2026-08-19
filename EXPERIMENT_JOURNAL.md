@@ -231,3 +231,30 @@ disagrees with the training eval — trust per-model deltas, not absolutes), one
 flatness with a larger shuffled eval subset + directional (update-dir/ascent-dir) sharpness
 slices, since isotropic noise may be the wrong probe. Dataset note: shared cache was rebuilt as
 `/workspace/data/tokenized/openwebtext_gpt2_bs1024` (slim schema, same script) — use that path.
+
+## 2026-08-19 — sweep2 (partial) + directional landscape probe
+
+**Relative ρ** (`perturbation_scale="relative"`, ‖ε_p‖ = ρ·EMA‖step_p‖) implemented; pilot winner
+maps to ρ_rel≈1.2. Sweep2 (12 runs, cross-optimizer + peak hunt + negative dose-response) queued
+via gpu-claim; 5 done at time of writing:
+
+| ascent→descent, ρ_rel | ppl | vs refs |
+|---|---|---|
+| **adam→muon, 4** | **29.11** | ≈1.6k steps (6.4%) ahead of muon; 0.9k ahead of nesterov |
+| muon→muon, 4 | 29.20 | peak is ≥4, rel8 pending |
+| muon→muon, 2 | 29.27 | |
+| muon→adam, 1 | 29.49 | worse with ρ: 4 → 29.56 (adamw baseline pending) |
+
+Cross-optimizer asymmetry: adam-ascent helps the muon descender (new best); muon-ascent hurts
+the adam descender, monotonically in ρ.
+
+**Directional probe** (`eval_directional.py`: loss slices ±8 step-units along grad / muon-dir /
+sign(g) / random, fresh val gradient): (1) random directions dead flat (±5e-4) while gradient-
+family directions move 0.1–10 nats — the landscape is entirely trajectory-anisotropic, isotropic
+flatness probes measure ~nothing; (2) "sharper but better" holds along mechanism directions —
+directional curvature orders ρ=−1 (1.40) < muon (1.47) < nesterov (1.69) < mm-rel4 (2.02) <
+am-rel4 (2.41); (3) **fingerprint**: am-rel4's residual descent slope along the adam/sign
+direction is ~half everyone else's (0.13 vs 0.17–0.35) — the adam-direction lookahead harvested
+adam-geometry descent that pure-muon training leaves unmined. Predicts the asymmetry: Adam
+already covers spectral directions decently, so muon→adam has less to harvest (matches results).
+Caveats: one seed, one 64-seq gradient batch, sign(g) is a crude adam proxy.
