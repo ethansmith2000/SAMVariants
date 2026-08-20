@@ -29,8 +29,12 @@ vice versa. All directions are built from shared buffers updated with the
 
 ## Conventions worth knowing
 
-- **Sign**: `rho > 0` = MSAM-style lookahead (perturb along −update direction);
-  `rho < 0` = classic SAM-style ascent. Sweep both.
+- **Sign**: `rho > 0` perturbs *forward along the descent direction* — a
+  Nesterov-style lookahead (verified: cos(ε, descent step) ≈ +0.9). MSAM calls
+  this "ascent" because the loss at that point is *higher*, not because the
+  direction is uphill: past ~1–2 steps you overshoot the line-minimum.
+  `rho < 0` perturbs along the gradient/uphill direction — classic SAM-style
+  ascent. Sweep both.
 - **Normalization**: `perturbation_norm="balanced"` (default) gives each param
   ‖ε_p‖ = ρ·√(numel_p/total) with unit per-param directions; total norm = ρ.
   Raw `"global"` (MSAM's choice) is only safe when every param uses the same

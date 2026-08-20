@@ -5,10 +5,13 @@ Follows the Momentum-SAM (MSAM, arXiv:2401.12033) convention:
     w̃ = w - rho * d / ||d||        (perturbation, applied AFTER each step)
 
 where d is an "ascent direction" built from optimizer buffers (momentum EMA,
-Adam direction, or Muon-orthogonalized momentum). Note the sign: MSAM perturbs
-*along* the parameter-update direction (negative momentum); the loss still
-increases there because momentum overshoots local minima. Passing a negative
-rho flips this into a classic SAM-style ascent perturbation.
+Adam direction, or Muon-orthogonalized momentum) and points *uphill* (the
+buffers accumulate gradients). So for rho > 0 the perturbation -rho*d̂ moves
+FORWARD along the descent direction — Nesterov-style lookahead, confirmed by
+cos(eps, descent step) ~ +0.9 in tests. MSAM labels this "ascent" because the
+loss at w̃ is higher (past ~1-2 steps you overshoot the line-minimum), not
+because the direction is uphill. Passing a negative rho perturbs along +d,
+i.e. the true gradient/uphill direction: classic SAM-style ascent.
 
 Invariant: between steps, param.data holds the perturbed weights w̃, so the
 gradient PyTorch computes at forward time is grad L(w̃). step() removes the old

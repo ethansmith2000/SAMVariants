@@ -244,6 +244,34 @@ def test_relative_scale_tracks_lr():
     assert abs(ratio - 2.0) < 0.05, ratio
 
 
+
+
+def test_positive_rho_perturbs_forward_along_descent():
+    """rho>0 must be a FORWARD (Nesterov-like) lookahead, not a reverse step.
+
+    Pins the sign semantics: the perturbation should point along the descent
+    step, and flipping rho's sign should reverse it (classic SAM ascent).
+    """
+    for rho, expect_forward in ((1.0, True), (-1.0, False)):
+        params = make_params(seed=14, sizes=((16, 16),))
+        opt = HybridSAM(params, lr=1e-2, rho=rho, ascent="momentum",
+                        descent="adam", weight_decay=0.0,
+                        perturbation_norm="per_param")
+        p = params[0]
+        prev_eps = torch.zeros_like(p)
+        for step in range(4):
+            fake_grads(params, seed=1400 + step)
+            w_before = p.data.clone()
+            opt.step()
+            eps = opt.state[p]["perturb"]
+            descent_step = (p.data - eps) - (w_before - prev_eps)
+            prev_eps = eps
+            if step > 0:
+                cos = torch.nn.functional.cosine_similarity(
+                    eps.flatten(), descent_step.flatten(), dim=0).item()
+                assert (cos > 0.5) == expect_forward, (rho, step, cos)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
