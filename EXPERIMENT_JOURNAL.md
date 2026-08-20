@@ -258,3 +258,55 @@ direction is ~half everyone else's (0.13 vs 0.17–0.35) — the adam-direction 
 adam-geometry descent that pure-muon training leaves unmined. Predicts the asymmetry: Adam
 already covers spectral directions decently, so muon→adam has less to harvest (matches results).
 Caveats: one seed, one 64-seq gradient batch, sign(g) is a crude adam proxy.
+
+## 2026-08-20 — sweep2 complete; regime critique; curvature disentangled
+
+**Full sweep2** (12 runs, relative ρ; refs: muon 3.3824, nesterov 3.3774, AdamW 3.4129):
+
+| ascent→descent, ρ_rel | eval loss |
+|---|---|
+| **adam→muon, 4** | **3.3711** (best; ≈1.5k steps / 6% ahead of muon, ≈0.9k ahead of nesterov) |
+| muon→muon, 8 / 4 | 3.3738 / 3.3741 (broad plateau — peak ≥4) |
+| muon→muon, 2 / 1 | 3.3766 / 3.3767 |
+| adam→muon, 1 | 3.3773 |
+| momentum→muon, 1 (MSAM-proper) | 3.3784 |
+| muon→adam, 1 / 4 | 3.3839 / 3.3865 (worse with ρ) |
+| muon→muon, −0.25 / −1 | 3.3866 / 3.3983 (ascent = monotone tax) |
+
+Headline: **cross-optimizer perturbation beats MSAM-style momentum perturbation** (3.3711 vs
+3.3784, ≈1k steps) and beats the nesterov control. Asymmetric: adam-ascent helps a muon
+descender; muon-ascent hurts an adam descender.
+
+**Confound in our own baseline** (queued as sweep3): HybridSAM's adam-descent takes
+`beta1=muon_beta1=0.95` while the `mode=adamw` baseline uses `beta1=0.9`, so muon→adam vs AdamW
+mixes ρ with a β₁ change. Proper A/A (muon→adam at ρ=0) + MSAM-proper at ρ=4 now running.
+
+**Regime critique (Ethan).** SAM's flat-minima premise was validated on classifiers trained to
+convergence; we run 0.82B tokens against an 8.6B-token corpus — <10% of one epoch, every sample
+fresh, so there is no generalization gap at all and eval loss measures pure optimization progress.
+SAM's mechanism has nothing to act on, and its cost is pure tax (matches the negative-ρ result).
+Stronger: nothing has *converged*, so "flat vs sharp minima" is not merely inert but
+category-confused — these are points mid-trajectory, not minima. Reframe the project as an
+optimizer result (cross-geometry lookahead), and test the sharpness claim only in a regime where
+generalization binds (multi-epoch on a subset, or downstream/OOD eval), where the sharp prediction
+is that **negative ρ should flip from worst to plausibly best**.
+
+**Curvature disentangled** (`eval_directional.py` over whole trajectories; step_* checkpoints of
+SAM runs sit at w̃ — measured bias from step_25000 vs the clean final save: loss +0.020,
+curvature −0.113 — so corrections are applied below):
+
+1. *Most of "winners are sharper" was a progress artifact*, as suspected: curvature along the
+   **baseline's own** trajectory triples (0.42 → 1.47) with no intervention, at ~10.9 curvature
+   units per nat. Earlier framing retracted.
+2. *A residual survives at matched loss*: winner's w̃-corrected 20k checkpoint (loss 3.846,
+   curv 2.03) vs baseline interpolated to the same loss (curv 1.41) → **+44% curvature at equal
+   loss**. Real, but smaller than the naive cross-run gap suggested.
+3. *The adam-direction slope depletion is progress-invariant* — the cleanest mechanistic
+   signature we have. Residual descent slope along sign(g) is flat across training for both runs
+   yet ~1.9× apart: baseline 0.224–0.276 at every checkpoint, winner 0.127–0.137 at every
+   checkpoint, from 10k onward. Perturbing along the adam direction genuinely harvests
+   adam-geometry descent that pure-muon training leaves unmined, and it is not a byproduct of
+   being further along.
+
+Probe caveat: 64-sequence gradient/eval batches — base losses are too noisy to rank runs (ρ=−1
+scores better than muon on them), so only paired/matched comparisons above are trusted.

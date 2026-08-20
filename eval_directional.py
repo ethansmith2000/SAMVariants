@@ -33,11 +33,31 @@ from utils import zeropower_via_newtonschulz5
 
 
 def load_model(model_dir, device):
-    with open(os.path.join(model_dir, "config.json")) as f:
+    """Load a final save (config.json + pytorch_model.bin) or an accelerate
+    step_* checkpoint (model.safetensors; config.json lives in the parent).
+
+    NOTE: step_* checkpoints of SAM runs are saved mid-training, so their
+    weights are the perturbed w̃, not the clean iterate. Baseline (non-SAM)
+    runs are unaffected.
+    """
+    cfg_dir = model_dir
+    if not os.path.exists(os.path.join(cfg_dir, "config.json")):
+        cfg_dir = os.path.dirname(model_dir.rstrip("/"))
+    with open(os.path.join(cfg_dir, "config.json")) as f:
         config = json.load(f)
     config["gradient_checkpointing"] = False
     model = Transformer(**config)
-    state = torch.load(os.path.join(model_dir, "pytorch_model.bin"), map_location="cpu")
+
+    bin_path = os.path.join(model_dir, "pytorch_model.bin")
+    safetensors_path = os.path.join(model_dir, "model.safetensors")
+    if os.path.exists(bin_path):
+        state = torch.load(bin_path, map_location="cpu")
+    else:
+        from safetensors.torch import load_file
+        state = load_file(safetensors_path)
+    # accelerate saves the compiled wrapper's state dict, which carries a
+    # "_orig_mod." prefix on every key
+    state = {k.removeprefix("_orig_mod."): v for k, v in state.items()}
     model.load_state_dict(state)
     return model.to(device)
 
