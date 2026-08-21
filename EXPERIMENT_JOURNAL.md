@@ -406,3 +406,41 @@ run, set `keep_last_n_checkpoints` high *for that run only* — don't re-enable 
 
 Note: `/workspace/.hf_home` holds 182GB, mostly the raw OWT download that the slim tokenized
 cache (34GB) supersedes. Reclaimable if needed, at the cost of a ~30min re-download.
+
+## 2026-08-21 — sweep4 partial: cross-geometry wins on BOTH descent sides
+
+`collect_results.py` added — scans logs + configs and prints the grid (marks in-flight runs, and
+segregates absolute-ρ pilot runs from relative-ρ sweeps, which are not comparable).
+
+descent = **muon** (ρ=0 baseline 3.3824; nesterov control 3.3774):
+
+| ascent \ ρ | 0.25 | 0.5 | 1 | 2 | 4 | 8 |
+|---|---|---|---|---|---|---|
+| momentum | – | run | 3.3784 | 3.3821 | 3.3945 | – |
+| adam | 3.3771 | run | 3.3773 | run | **3.3712** | – |
+| muon | – | 3.3790 | 3.3767 | 3.3766 | 3.3741 | 3.3738 |
+
+descent = **adam** (ρ=0 baseline 3.3945, β₁=0.95):
+
+| ascent \ ρ | 0.25 | 0.5 | 1 | 2 | 4 |
+|---|---|---|---|---|---|
+| momentum | – | **3.3829** | 3.3861 | run | – |
+| adam | – | 3.3902 | run | run | – |
+| muon | 3.3964 | – | 3.3839 | run | 3.3865 |
+
+**The thesis now holds symmetrically: cross-geometry beats matched geometry on both sides.**
+- descent=muon: best cross (adam→muon, 3.3712) beats best matched (muon→muon, 3.3738).
+- descent=adam: best cross so far (momentum→adam 3.3829; muon→adam 3.3839) beats matched
+  (adam→adam 3.3902).
+
+Other reads (provisional, 8 cells still running):
+- **MSAM-on-Adam (momentum→adam) is strong at low ρ** — 3.3829 at ρ=0.5, the best adam-descent
+  number yet, −0.0116 vs its baseline. Note this is the paper's own Adam variant, run properly
+  for the first time.
+- Each ascent family has a distinct optimal ρ, consistent with the concentration measurements:
+  momentum peaks lowest (≤1 for muon-descent, 0.5 for adam-descent) and degrades fast; muon
+  peaks broad and high (4–8); adam is flat 0.25–1 then improves at 4. Ethan's [0.25, 2] intuition
+  holds for the *concentrated* (momentum) directions; the whitened/orthogonalized ones tolerate —
+  and prefer — much larger lookahead.
+- `muon→adam` at ρ=0.25 is *worse* than baseline (3.3964, +0.0019) while ρ=1 is best for that
+  cell: too small a lookahead is not merely weak but slightly harmful there.
