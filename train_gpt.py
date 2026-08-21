@@ -75,6 +75,7 @@ import hashlib
 import json
 import logging
 import math
+import shutil
 from itertools import chain
 from typing import Any
 
@@ -201,6 +202,24 @@ def _build_optimizer(args, model, optimizer_grouped_parameters):
     raise ValueError(f"Unsupported optimizer mode: {args.mode}")
 
 
+def _prune_checkpoints(output_dir, keep_last_n):
+    """Keep only the newest `keep_last_n` step_* checkpoints.
+
+    Each checkpoint is model (~1GB) + optimizer state (~2-3GB: exp_avg,
+    exp_avg_sq, and HybridSAM's cached perturbation), so an unpruned sweep
+    fills hundreds of GB. Auto-resume only ever reads the newest one.
+    """
+    if not keep_last_n or keep_last_n < 1 or not os.path.isdir(output_dir):
+        return
+    ckpts = sorted(
+        (int(e.name.split("_")[1]), e.path)
+        for e in os.scandir(output_dir)
+        if e.is_dir() and e.name.startswith("step_") and e.name.split("_")[1].isdigit()
+    )
+    for _, path in ckpts[:-keep_last_n]:
+        shutil.rmtree(path, ignore_errors=True)
+
+
 def _unwrap_optimizer(optimizer):
     return getattr(optimizer, "optimizer", optimizer)
 
@@ -260,6 +279,9 @@ def main():
         "no_keep_linebreaks": False,
         "trust_remote_code": False,
         "checkpointing_steps": None,
+        # keep only the newest N step_* checkpoints (auto-resume needs 1)
+        "keep_last_n_checkpoints": 1,
+        "discard_checkpoints_at_end": True,
         "resume_from_checkpoint": None,
         "with_tracking": True,
         "report_to": "wandb",
@@ -792,6 +814,8 @@ def main():
                     if args.output_dir is not None:
                         output_dir = os.path.join(args.output_dir, output_dir)
                     accelerator.save_state(output_dir)
+                    if accelerator.is_main_process:
+                        _prune_checkpoints(args.output_dir, args.keep_last_n_checkpoints)
             if completed_steps >= args.max_train_steps:
                 break
 
@@ -846,6 +870,11 @@ def main():
 
     if args.with_tracking:
         accelerator.end_training()
+
+    # Training is done: resume checkpoints are dead weight now (the final
+    # unperturbed model is saved below), so reclaim their disk.
+    if accelerator.is_main_process and args.output_dir:
+        _prune_checkpoints(args.output_dir, keep_last_n=0 if args.discard_checkpoints_at_end else args.keep_last_n_checkpoints)
 
     # Training is done: permanently move back to the clean iterate w before
     # saving (the shipped weights should never include the SAM perturbation).

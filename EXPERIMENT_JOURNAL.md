@@ -380,3 +380,29 @@ variant!) had never been run.
 {muon, adam} × ρ ∈ {0.5, 1, 2} grid, plus ρ=0.25 for the two most promising cells, with existing
 ρ ∈ {4, 8} points as upper-range context and `sweep3-ma-rel0` (3.3945) as the adam-descent ρ=0
 anchor. This makes every family comparable peak-to-peak instead of at an arbitrary common ρ.
+
+## 2026-08-21 — disk blowout: checkpoint policy tightened
+
+Checkpoints filled ~500GB and blocked VSCode SSH; Ethan deleted `model-output`. No *results*
+were lost (eval numbers live in the run logs and wandb) — only checkpoints, and only the
+directional/flatness probes depend on those.
+
+Arithmetic worth remembering: the 255M-param model is ~1GB fp32, and an accelerate `save_state`
+adds optimizer state — `exp_avg` + `exp_avg_sq` + **HybridSAM's cached `perturb` tensor** — so
+each step_* checkpoint is ~3–4GB, and one 15-run sweep at every-5k checkpointing is ~250GB. Our
+own perturbation cache contributes ~1GB of that per checkpoint (the price of exact removal).
+
+Policy now:
+- `train_gpt.py` prunes to `keep_last_n_checkpoints` (default 1) after every periodic save, and
+  drops resume checkpoints entirely at the end of training (`discard_checkpoints_at_end`, default
+  true) since the final unperturbed model is saved separately.
+- `checkpointing_steps` 5000 → 10000 in all sweep configs.
+- `prune_checkpoints.sh` reaps for already-running jobs (which hold the pre-patch code); safe any
+  time, since auto-resume only reads the newest checkpoint. Running in loop mode during sweep4.
+- Steady state per run: ~1GB final model (+ ≤4GB transient while training) instead of ~20GB.
+
+If trajectory probes (`eval_directional.py` over step_* checkpoints) are wanted for a specific
+run, set `keep_last_n_checkpoints` high *for that run only* — don't re-enable it sweep-wide.
+
+Note: `/workspace/.hf_home` holds 182GB, mostly the raw OWT download that the slim tokenized
+cache (34GB) supersedes. Reclaimable if needed, at the cost of a ~30min re-download.
