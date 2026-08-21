@@ -310,3 +310,43 @@ curvature −0.113 — so corrections are applied below):
 
 Probe caveat: 64-sequence gradient/eval batches — base losses are too noisy to rank runs (ρ=−1
 scores better than muon on them), so only paired/matched comparisons above are trusted.
+
+## 2026-08-21 — sweep3 controls: two-mode framing, and a retraction
+
+**Framing (Ethan).** The sign of ρ selects between two genuinely different algorithms:
+
+- **Mode A (ρ<0)** — ascend in optim₁'s geometry → grad → undo → descend with optim₂. SAM-like.
+- **Mode B (ρ>0)** — extra *forward* step in optim₁'s geometry → grad → undo → descend with
+  optim₂. Nesterov/extragradient-like, in a possibly different geometry.
+
+**Retraction.** Earlier claim "muon-ascent hurts an adam descender, monotonically in ρ" was an
+artifact of the β₁-mismatched AdamW baseline. Proper A/A (`sweep3-ma-rel0`, β₁=0.95, ρ=0) =
+3.3945; β₁ 0.9→0.95 alone accounts for 0.018 of the 0.029 gap. Against its *correct* baseline
+the adam-descent arm **improves**: ρ=1 → 3.3839 (−0.0106), ρ=4 → 3.3865 (−0.0080). So Mode B
+helps every descent geometry tested; what differs is the optimal ρ (muon-descent peaks ≥4,
+adam-descent peaks near 1).
+
+**Mode B summary, each against its own proper baseline:**
+
+| ascent→descent | baseline | best | Δ |
+|---|---|---|---|
+| adam→muon | muon 3.3824 | 3.3711 (ρ=4) | −0.0113 |
+| muon→muon | muon 3.3824 | 3.3738 (ρ=8) | −0.0086 |
+| muon→adam | adam-β₁.95 3.3945 | 3.3839 (ρ=1) | −0.0106 |
+| momentum→muon (MSAM) | muon 3.3824 | 3.3784 (ρ=1) | −0.0040 |
+| nesterov control | muon 3.3824 | 3.3774 | −0.0050 |
+
+**New: preconditioning determines how far you can extrapolate.** MSAM's raw-momentum ascent
+*collapses* at large ρ (`sweep3-mom-m-rel4` = 3.3945, far worse than its ρ=1 3.3784 and worse
+than baseline muon), while preconditioned ascent directions (adam, muon) keep improving to ρ=4–8.
+Plausible reading: the raw momentum direction has wildly heterogeneous per-coordinate scale, so
+extrapolating several steps along it is destructive; whitened/orthogonalized directions stay
+well-conditioned far from the current iterate. This is a mechanism-level reason cross-optimizer
+perturbation beats MSAM that has nothing to do with sharpness.
+
+**Gap, now obvious under the two-mode framing:** Mode A has only ever been run in the *matched*
+cell (muon-ascent → muon-descent). Mode A × cross-geometry is untested — and under SAM theory
+that is the interesting one, since steepest ascent is norm-relative (Euclidean → gradient,
+spectral → NS-orthogonalized, ~L∞ → sign-like), i.e. "which norm ball should SAM use for a
+Muon-trained transformer" (cf. ASAM). Also still untested: true SAM with a *fresh* gradient at w
+(2× cost) — our Mode A only approximates ascent using stale momentum buffers.
