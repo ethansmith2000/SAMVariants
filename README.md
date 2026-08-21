@@ -29,12 +29,33 @@ vice versa. All directions are built from shared buffers updated with the
 
 ## Conventions worth knowing
 
-- **Sign**: `rho > 0` perturbs *forward along the descent direction* — a
-  Nesterov-style lookahead (verified: cos(ε, descent step) ≈ +0.9). MSAM calls
-  this "ascent" because the loss at that point is *higher*, not because the
-  direction is uphill: past ~1–2 steps you overshoot the line-minimum.
-  `rho < 0` perturbs along the gradient/uphill direction — classic SAM-style
-  ascent. Sweep both.
+- **Two modes, selected by the sign of ρ.** Each step:
+  perturb w → compute the gradient at w̃ → revert → descend from w.
+
+  | | ρ > 0 — **LOOKAHEAD** | ρ < 0 — **ASCENT** |
+  |---|---|---|
+  | ε points | *forward* along the descent direction | *uphill* along the gradient direction |
+  | verified | cos(ε, descent step) ≈ +0.9 | cos(ε, descent step) ≈ −0.9 |
+  | analogy | Nesterov / extragradient | classic SAM |
+  | loss at w̃ | higher (you overshoot the line-minimum past ~1–2 steps) | higher (you climbed) |
+
+  MSAM calls its ρ>0 perturbation "ascent" because the *loss* there is higher,
+  not because the direction is uphill. We reserve "ascent" for ρ<0 and say
+  "lookahead" for ρ>0.
+
+- **`ascent=` / `descent=` name geometries, not directions.** `ascent` is which
+  optimizer's direction we perturb *along* (aliased `perturb_with=`); `descent`
+  is which optimizer performs the actual update (aliased `update_with=`).
+  So `ascent="adam", descent="muon", rho=4` = "look 4 Muon-steps ahead along
+  the Adam direction, then take a Muon step".
+
+- **What ρ means**: with `perturbation_scale="relative"` (all sweeps since the
+  pilot), ‖ε_p‖ = |ρ| · EMA(‖actual update to p‖) — ρ is *multiples of that
+  parameter's own recent update length*. This is not MSAM's convention: MSAM
+  normalizes by one **global** Frobenius norm over all parameters, so its ρ is
+  an absolute distance in weight space (their 1.7–5.5). `"absolute"` mode is
+  the MSAM-like setting.
+
 - **Normalization**: `perturbation_norm="balanced"` (default) gives each param
   ‖ε_p‖ = ρ·√(numel_p/total) with unit per-param directions; total norm = ρ.
   Raw `"global"` (MSAM's choice) is only safe when every param uses the same

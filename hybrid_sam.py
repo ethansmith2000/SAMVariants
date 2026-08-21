@@ -92,7 +92,15 @@ class HybridSAM(torch.optim.Optimizer):
         muon_max_dim=16384,
         muon_fallback_ascent: Literal["skip", "momentum", "adam"] = "skip",
         track_stats=False,
+        perturb_with=None,   # clearer alias for `ascent` (a geometry, not a direction)
+        update_with=None,    # clearer alias for `descent`
     ):
+        # `ascent`/`descent` name which optimizer's *geometry* builds the
+        # perturbation and which performs the update. They say nothing about
+        # direction: the sign of rho decides that (rho>0 lookahead / forward,
+        # rho<0 ascent / uphill).
+        ascent = perturb_with if perturb_with is not None else ascent
+        descent = update_with if update_with is not None else descent
         # perturbation_scale="relative": ||eps_p|| = |rho| * EMA(||descent step of p||),
         # i.e. rho is dimensionless — "how many of my own update steps of lookahead".
         # Comparable across ascent/descent families, optimizers, and model scales

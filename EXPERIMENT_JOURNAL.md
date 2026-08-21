@@ -26,16 +26,38 @@ with your optimizer of choice — Adam-perturb/Muon-descend, Muon-perturb/Adam-d
   Adam descent is exactly MSAM-on-Adam. `ascent="adam"` (preconditioned direction) and
   `ascent="muon"` are new territory.
 
-**Our conventions** (`hybrid_sam.py`):
+**Our conventions** (`hybrid_sam.py`) — terminology, stated precisely:
 
-- `rho > 0` = MSAM lookahead sign; `rho < 0` = classic SAM ascent. Signed ρ is the ablation.
-- `perturbation_norm="balanced"` (default): per-param unit directions scaled √(numel_p/total),
-  total norm = ρ, equal per-element RMS everywhere. `"global"` reproduces MSAM but is only safe
-  for homogeneous direction families (see 2026-08-16 finding below). `"per_param"`: every tensor
-  gets norm ρ.
-- Weights live at w̃ between steps. Eval inside `optimizer.unperturbed()`; final save after
-  `optimizer.remove_perturbation()`. `eval_sam_gap` = loss(w̃) − loss(w) is logged at each
-  validation as a free sharpness probe.
+Each step: **perturb w → compute the gradient at w̃ → revert → descend from w.**
+The *sign of ρ* selects which of two algorithms that is:
+
+| | ρ > 0 — **LOOKAHEAD** | ρ < 0 — **ASCENT** |
+|---|---|---|
+| ε points | *forward* along the descent direction | *uphill* along the gradient direction |
+| measured | cos(ε, descent step) ≈ +0.9 | ≈ −0.9 |
+| family | Nesterov / extragradient | classic SAM |
+
+MSAM calls its ρ>0 perturbation "ascent" because the *loss* at w̃ is higher (momentum overshoots
+the line-minimum), not because the direction is uphill. **We reserve "ascent" for ρ<0 and use
+"lookahead" for ρ>0** — earlier journal entries used MSAM's looser wording.
+
+`ascent=` / `descent=` name **geometries, not directions** (clearer aliases: `perturb_with=`,
+`update_with=`). `ascent="adam", descent="muon", rho=4` reads: *look 4 Muon-steps ahead along the
+Adam direction, then take a Muon step.*
+
+**What ρ measures** — differs from MSAM, deliberately:
+- ours, `perturbation_scale="relative"` (every sweep since the pilot): ‖ε_p‖ = |ρ| · EMA(‖actual
+  update applied to p‖), **per parameter**. ρ is dimensionless: multiples of that parameter's own
+  recent step length.
+- MSAM: ε = −ρ·v/‖v‖ with **one global** Frobenius norm over all parameters concatenated, so their
+  ρ is an absolute distance in weight space (hence their 1.7–5.5). Our `"absolute"` mode is the
+  MSAM-like setting; the pilot used it.
+
+Other: `perturbation_norm="balanced"` (absolute mode only) gives each param ‖ε_p‖ = ρ·√(numel_p/
+total); raw `"global"` reproduces MSAM but is only safe when every param uses the same direction
+family (see the 2026-08-16 finding). Weights live at w̃ between steps: eval inside
+`optimizer.unperturbed()`, final save after `optimizer.remove_perturbation()`, and
+`eval_sam_gap` = loss(w̃) − loss(w) is logged each validation.
 
 ---
 
