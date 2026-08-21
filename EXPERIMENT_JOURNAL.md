@@ -350,3 +350,33 @@ that is the interesting one, since steepest ascent is norm-relative (Euclidean �
 spectral → NS-orthogonalized, ~L∞ → sign-like), i.e. "which norm ball should SAM use for a
 Muon-trained transformer" (cf. ASAM). Also still untested: true SAM with a *fresh* gradient at w
 (2× cost) — our Mode A only approximates ascent using stale momentum buffers.
+
+## 2026-08-21 — norm-matching caveat quantified; sweep4 (balanced grid)
+
+**Ethan's caution on the MSAM-collapse claim is correct and measurable.** ρ matches the *L2 norm*
+of the perturbation to the descent-step norm, but families distribute that budget completely
+differently (measured on a trained checkpoint, per 2D weight matrix):
+
+| direction family | max/RMS | participation ratio (1 = uniform) |
+|---|---|---|
+| raw momentum | 21.1 | 0.07 |
+| adam (whitened) | 1.0 | 0.995 |
+| muon (orthogonalized) | 5.5 | 0.31 |
+
+At matched L2 norm the momentum perturbation concentrates ~all displacement in <10% of
+coordinates, moving those ~21× RMS, while the adam direction spreads uniformly. So nominal ρ is
+**not comparable across ascent families**, and "raw momentum collapses at ρ=4" is at least partly
+"ρ=4 is a much larger effective lookahead for momentum". Retract the conditioning explanation as
+stated; the defensible comparison is **peak-to-peak** (each family at its own optimal ρ), and
+momentum's peak is undersampled (only ρ ∈ {1, 4} run).
+
+**Design critique (Ethan):** the sweep varied geometry pair and ρ together, unbalanced, and the
+low-ρ range Mode B most plausibly wants (0.25–2) was barely sampled — note `muon→adam` peaked at
+ρ=1, the *lowest* value tested, the same edge-of-grid problem flagged earlier for muon-descent.
+Also `adam→adam` (the matched cell for adam descent) and `momentum→adam` (MSAM's own Adam
+variant!) had never been run.
+
+**sweep4** (15 runs, queued): completes a balanced ascent {momentum, adam, muon} × descent
+{muon, adam} × ρ ∈ {0.5, 1, 2} grid, plus ρ=0.25 for the two most promising cells, with existing
+ρ ∈ {4, 8} points as upper-range context and `sweep3-ma-rel0` (3.3945) as the adam-descent ρ=0
+anchor. This makes every family comparable peak-to-peak instead of at an arbitrary common ρ.
