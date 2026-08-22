@@ -466,3 +466,26 @@ Other reads (provisional, 8 cells still running):
   and prefer — much larger lookahead.
 - `muon→adam` at ρ=0.25 is *worse* than baseline (3.3964, +0.0019) while ρ=1 is best for that
   cell: too small a lookahead is not merely weak but slightly harmful there.
+
+## 2026-08-22 — 38-hour silent stall (post-mortem) + watchdog
+
+Six sweep4 runs **deadlocked at 2026-08-21 06:22** and sat alive-but-frozen for 38 hours,
+holding ~30GB of GPU each across six GPUs. Diagnosis: trainer blocked in `futex_wait_queue_me`
+with all 8 dataloader workers in `do_poll`, zero log output, CPU time frozen. Timing coincides
+exactly with the disk hitting 100% — a write blocking under ENOSPC while holding a lock is the
+most plausible trigger. `model-output/sweep4_owt` had been deleted, so there was nothing to
+resume from and the affected cells restart from scratch.
+
+Cost: ~38h × 6 GPUs, and it blocked other projects' jobs from claiming those GPUs. **Nothing in
+our tooling noticed** — the supervisor service showed RUNNING, gpu-claim showed the jobs HELD by
+live PIDs, and progress only looked wrong when step counts were compared across days.
+
+Fixes:
+- `watchdog.sh` — kills our trainers whose log has not advanced in 25 min (safe: runs auto-resume;
+  matches strictly on `/proc/<pid>/cwd` so other projects' `train_gpt.py` is never touched).
+- `supervisor/sam_sweep4.sh` — skips configs whose log already contains "Saving model to", and
+  gives each config up to 3 attempts, so a killed/stalled run retries instead of being lost.
+- Root trigger (unbounded checkpoints filling the disk) already fixed 2026-08-21.
+
+Lesson for the journal: "process alive + GPU claimed" is not progress. Compare step counts
+against wall-clock, or watch log mtimes.
