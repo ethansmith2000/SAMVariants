@@ -18,8 +18,9 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 CONFIGS=(
   sweep4-am-rel0p5 sweep4-ma-rel0p5
   sweep4-aa-rel1   sweep4-aa-rel2
-  sweep4-am-rel2   sweep4-ga-rel2
-  sweep4-gm-rel0p5 sweep4-ma-rel2
+  sweep4-am-rel2   sweep4-ma-rel2
+  # momentum-ascent cells (gm-*, ga-*) dropped: MSAM's own geometry, not the
+  # cross-optimizer question. Existing results kept in the journal.
 )
 MAX_ATTEMPTS=3
 

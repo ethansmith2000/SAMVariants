@@ -489,3 +489,39 @@ Fixes:
 
 Lesson for the journal: "process alive + GPU claimed" is not progress. Compare step counts
 against wall-clock, or watch log mtimes.
+
+## 2026-08-22 — corrections and scope decisions (Ethan)
+
+**Retraction: "the flatness story is dead" was overstated.** What the evidence supports is
+narrower: *lookahead's* gains are not explained by flatness — and never should have been expected
+to be, since ρ>0 is the opposite manoeuvre from SAM. The *ascent* branch's flatness claim is
+**untested in an applicable regime**, not disproven: our runs are ~10% of one epoch, nowhere near
+convergence, with no generalization gap for a flat-minimum effect to show up in. Ascent may well
+need much longer training before it can pay off, and the ρ<0 numbers here should be read as
+"no benefit at 25k steps", not "no benefit".
+
+**Scope: drop momentum as an ascent geometry.** Perturbing along the raw momentum direction is
+MSAM's own choice, not the cross-optimizer question this project exists to answer. Existing
+results are kept (gm/ga cells in the grid), but no further compute goes there. Enforced by a
+blocklist in `watchdog.sh` and removal from the sweep4 queue.
+
+**Deadlock vs. queue — how to tell them apart** (both occurred, and they look identical in
+`supervisorctl status`):
+- *Deadlocked*: CPU time accumulated then froze, `wchan = futex_wait_queue_me`, GPU memory held
+  at 0% utilization, log mtime static for hours. Kill it.
+- *Queued*: no `train_gpt.py` process at all — only a `gpu-claim.py run --wait` waiter, no GPU
+  memory held. Its log is stale simply because the run has not started. Leave it.
+
+**ρ optimum splits by DESCENT geometry, not ascent geometry** — the clearest pattern in the grid:
+
+| update with | best ρ | reading under Ethan's integrator framing |
+|---|---|---|
+| adam | 0.5–1 | ρ=0.5 ≈ RK2 midpoint, ρ=1 ≈ Heun/trapezoid predictor — the *classical* regime |
+| muon | 4–8 | far past the endpoint; not a standard integrator at all |
+
+Caveat before over-reading ρ=4: the perturbation direction is built from the momentum EMA
+(β₁=0.95, horizon ~20 steps), so it is a *smoothed* direction. Displacing 4 step-norms along a
+smoothed direction is not the same as being 4 actual steps ahead on a curving trajectory — the
+true along-path displacement is smaller. Diagnostic to settle it: measure
+cos(perturbation direction, actual displacement over the next k steps) and the ratio
+‖ε‖ / ‖w_{t+k} − w_t‖, which converts ρ into "effective steps of lookahead".
