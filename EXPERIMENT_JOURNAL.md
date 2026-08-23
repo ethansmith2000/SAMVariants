@@ -525,3 +525,40 @@ smoothed direction is not the same as being 4 actual steps ahead on a curving tr
 true along-path displacement is smaller. Diagnostic to settle it: measure
 cos(perturbation direction, actual displacement over the next k steps) and the ratio
 ‖ε‖ / ‖w_{t+k} − w_t‖, which converts ρ into "effective steps of lookahead".
+
+## 2026-08-23 — lookahead diagnostic: rho=4 really is 4 steps, and my explanation was wrong
+
+`diag_lookahead.py` (400 steps, real 1024×12 model, 4 watched matrices). S(k) = ‖Σuᵢ‖/Σ‖uᵢ‖ is
+trajectory straightness (1 = straight line); ‖u‖/‖W‖ is per-step displacement relative to weight
+norm.
+
+| descent | cos(u_t,u_t₊₁) | S(2) | S(4) | S(8) | ρ=4 overshoot | cos(adam,muon) | ‖u‖/‖W‖ | ρ=4 → %‖W‖ |
+|---|---|---|---|---|---|---|---|---|
+| muon | 0.720 | 0.927 | 0.875 | 0.823 | 1.14× | 0.557 | 0.485% | 1.94% |
+| adam | 0.971 | 0.993 | 0.981 | 0.945 | 1.02× | 0.424 | 0.193% | 0.77% |
+
+1. **ρ=4 ≈ 4 real steps ahead.** Trajectories are nearly straight over 4–8 steps, so displacing
+   4 update-lengths overshoots the true 4-step position by only 1.14× (muon) / 1.02× (adam). The
+   curvature caveat I raised is resolved — Ethan's reading ("it's 4× the update, full stop") was
+   right, and ρ is a faithful "steps of lookahead" unit.
+2. **My straightness explanation for the descent-side ρ split is refuted, and backwards.** Adam's
+   path is *straighter* (0.971 vs 0.720 one-step autocorrelation; S(8) 0.945 vs 0.823) yet Adam
+   prefers ρ≈0.5–1 while Muon wants 4–8. Straightness does not explain the split.
+3. **Nor is it a units artifact.** Per-step displacement differs only 2.5× (0.485% vs 0.193% of
+   ‖W‖), while the ρ optima differ 4–8×; in %‖W‖ the optima are ~1.9–3.9% (muon) vs ~0.1–0.2%
+   (adam), roughly 20× apart. The adam-descent arm genuinely wants a much smaller probe.
+   **The descent-side split remains unexplained.**
+4. **The winning config is mostly a sideways probe, not extrapolation.** cos(adam_dir, muon_dir)
+   ≈ 0.56, so adam→muon at ρ=4 decomposes into ≈2.2 update-lengths *along* the descent direction
+   and ≈3.3 *perpendicular* to it. That fits the progress-invariant slope-depletion signature
+   (2026-08-19) better than any lookahead story: the gain looks like sampling gradients in
+   directions Muon's own geometry never visits.
+5. Side note: adam-descent's 0.971 update autocorrelation is very high, consistent with β₁=0.95
+   (we use muon_beta1 for all hybrid runs) being over-smoothed relative to Adam's usual 0.9.
+
+**sweep4 complete** (12/15 saved; the 3 unsaved are momentum-ascent cells we dropped, whose eval
+numbers are already recorded). **sweep5 launched**: seed replicates (seeds 102/103) of
+adam→muon ρ=4, muon baseline, and muon→muon ρ=4 — the n=1 problem is the main validity gap.
+Note: unify `tokenized_dataset_path` when deriving configs from older sweeps — the pilot configs
+still pointed at the deleted `_slim` cache, which would have silently re-tokenized *and* broken
+comparability.
