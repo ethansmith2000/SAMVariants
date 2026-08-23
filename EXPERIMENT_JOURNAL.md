@@ -618,3 +618,44 @@ reference point; `ascent_beta1` staleness; lr decay; and the long-run regime.
 25k steps is 0.82B tokens of an 8.6B-token corpus (<10% of one epoch) with no
 generalization gap, so the flat-minima axis SAM targets is not merely inert
 here but ill-defined — the ascent-side claim cannot be settled at this length.
+
+## 2026-08-23 — long-run arm (100k steps, cosine decay)
+
+Every result so far is from 25k steps = 0.82B tokens of an 8.6B-token corpus
+(<10% of one epoch), constant LR, never converged, no generalization gap. Two
+claims cannot be evaluated in that regime at all: whether the lookahead gain
+persists with more tokens, and whether ascent (rho<0) pays off near convergence
+— the flat-minima mechanism SAM actually targets. Three 100k-step runs
+(~14h each) address it:
+
+| run | config | question |
+|---|---|---|
+| `long-muon` | Muon, cosine to 0 | baseline |
+| `long-am-rel4` | adam->muon, relative rho=+4 | does the best cell's gain survive 4x tokens + decay? |
+| `long-mm-absn2` | muon->muon, **absolute** rho=-2.0 | does ascent pay off near convergence? |
+
+Two deliberate design choices worth recording:
+
+1. **Cosine decay, not constant LR.** Constant LR never converges, so the
+   flat-minima axis stays ill-defined no matter how long we run. Decay is what
+   makes the ascent question answerable. Cost: the long runs differ from the
+   25k grid in length *and* schedule, so they are internally controlled
+   (all three share the schedule) but not directly comparable cell-by-cell to
+   the grid.
+2. **The ascent arm uses absolute scale; the lookahead arm stays relative.**
+   Under `relative`, ||eps|| tracks the update norm, which decays with the LR —
+   so a relative-rho ascent run would shrink its perturbation radius toward zero
+   exactly as convergence arrives, i.e. it would switch the treatment off at the
+   only moment the hypothesis predicts an effect. Absolute holds the radius
+   fixed. rho=-2.0 is calibrated, not guessed: the 25k `mm-reln1` run logged a
+   total perturbation norm of 1.95, which also sits inside MSAM's published
+   1.7-5.5 band. Relative stays correct for the lookahead arm, where "always
+   look 4 of my own steps ahead" is the scale-free semantics we tuned.
+
+`num_validation_batches` raised 25 -> 100: the effects we are chasing are ~0.01
+nats and the grid's 25-batch estimate is too noisy to resolve that at n=1.
+
+Also installed `sam_watchdog` as a supervisor service — it was written after the
+38h stall but was not actually running. STALL_MIN raised 25 -> 45min, because
+the long runs validate every 2500 steps (~21min) and 25min sits too close to a
+normal quiet gap to be a safe kill threshold.
