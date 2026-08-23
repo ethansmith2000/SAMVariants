@@ -196,6 +196,8 @@ def _build_optimizer(args, model, optimizer_grouped_parameters):
             perturbation_scale=args.hybrid_sam_perturbation_scale,
             muon_max_dim=args.muon_max_dim,
             muon_fallback_ascent=args.hybrid_sam_muon_fallback_ascent,
+            ascent_orthogonalize=args.hybrid_sam_ascent_orthogonalize,
+            perturb_muon_eligible_only=args.hybrid_sam_perturb_muon_eligible_only,
             track_stats=args.hybrid_sam_track_stats,
         )
 
@@ -309,6 +311,8 @@ def main():
         "hybrid_sam_perturbation_norm": "balanced",
         "hybrid_sam_perturbation_scale": "absolute",
         "hybrid_sam_muon_fallback_ascent": "skip",
+        "hybrid_sam_ascent_orthogonalize": False,
+        "hybrid_sam_perturb_muon_eligible_only": False,
         "hybrid_sam_track_stats": True,
         "eval_perturbed": True,
 

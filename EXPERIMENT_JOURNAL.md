@@ -562,3 +562,59 @@ adam→muon ρ=4, muon baseline, and muon→muon ρ=4 — the n=1 problem is the
 Note: unify `tokenized_dataset_path` when deriving configs from older sweeps — the pilot configs
 still pointed at the deleted `_slim` cache, which would have silently re-tokenized *and* broken
 comparability.
+
+## 2026-08-23 — sweep6: is the mechanism lookahead, or a sideways probe?
+
+**Correction to the sweep4 read.** I previously described a "descent-side split"
+(adam-descent optimal at rho~0.5-1, muon-descent at 4-8) and called it
+unexplained. It was an artifact of an under-swept column: adam->adam goes
+0.5=3.3902, 1.0=3.3845, **2.0=3.3720** — still improving at the edge of its
+range, and the largest single delta in the table (-0.0225 vs the adam
+baseline 3.3945). Both descent geometries want large rho. There is likely no
+split to explain. Two cells now sit at a swept-range edge (same mistake as the
+pilot): adam->muon@4 (global best, 3.3712) with no rho=8, and adam->adam@2 with
+no rho=4.
+
+**The hypothesis under test.** diag_lookahead gave cos(adam_dir, muon_dir)=0.56,
+so adam->muon@rho=4 decomposes into ~2.2 update-lengths forward and ~3.3
+sideways. Matched muon->muon@4 is *pure* forward (4.0 lengths) and is worse
+(3.3741 vs 3.3712). So the gain may come from sampling the gradient in
+directions the descent geometry never visits, not from lookahead.
+
+New optimizer options (default off; all 19 tests pass incl. the bit-exact
+rho=0 == Muon/AdamW anchors):
+- `ascent_orthogonalize` — project the ascent direction orthogonal to the
+  descent direction: pure sideways, forward component removed. Reuses the
+  descent direction cached during the step, so no second Newton-Schulz pass.
+- `ascent="random"` — isotropic control at the same norm.
+- `perturb_muon_eligible_only` — coverage-matched control. On non-muon-eligible
+  params (embeddings, 1D) muon-descent falls back to adam, so an adam ascent
+  direction is parallel there and the orthogonal probe drops them. Without this
+  control, perp-vs-baseline would confound "forward component removed" with
+  "embeddings no longer perturbed". A test asserts the two flags select exactly
+  the same param set.
+
+Queued (25k steps, seed 0, all else identical to sweep2-am-rel4):
+
+| run | tests |
+|---|---|
+| `sweep6-am-perp4` | adam⊥muon -> muon, rho=+4: pure sideways |
+| `sweep6-am-rel4-elig` | coverage-matched control for the above |
+| `sweep6-am-perpn4` | same, rho=-4: a pure sideways probe should be ~sign-invariant |
+| `sweep6-rand-m-rel4` | random -> muon, rho=4: does *any* off-trajectory probe help? |
+| `sweep6-am-rel8` | closes the range edge on the global best |
+| `sweep6-aa-rel4` | closes the range edge on adam-descent |
+| `sweep6-am-reln1` | ascent quadrant is empty for cross-geometry |
+
+Predictions worth recording before the numbers land: if the mechanism is
+sideways probing, perp4 ~= am-rel4-elig and perpn4 ~= perp4; if it is genuine
+lookahead, perp4 falls back toward the elig-baseline's rho=0. If rand-m-rel4
+also helps, the effect is gradient smoothing rather than anything about Adam's
+geometry — that would be the deflating outcome and is the reason the control
+is in the batch.
+
+**Still untested after sweep6:** true SAM with a fresh gradient (2x cost) as a
+reference point; `ascent_beta1` staleness; lr decay; and the long-run regime.
+25k steps is 0.82B tokens of an 8.6B-token corpus (<10% of one epoch) with no
+generalization gap, so the flat-minima axis SAM targets is not merely inert
+here but ill-defined — the ascent-side claim cannot be settled at this length.
