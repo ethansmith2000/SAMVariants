@@ -725,3 +725,50 @@ non-monotonicity that one datapoint cannot resolve. `sweep6-am-perp4` (+4) and
   convergence if the run is long enough that the schedule has actually come
   down. A 5-10k-step slice of a 100k schedule still sits near peak LR, so short
   runs cannot fake convergence by decaying faster.
+
+## 2026-08-25 (pm) — sweep6 results: the mechanism decomposes into thirds
+
+Watchdog fix held; 5/7 cells complete (`am-rel8`, `aa-rel4` still running).
+
+| run | eval | vs muon 3.3824 |
+|---|---|---|
+| `am-rel4` (all params) | **3.3712** | -0.0112 |
+| `am-rel4-elig` (muon-eligible only) | 3.3761 | -0.0063 |
+| `am-perp4` (pure sideways, rho=+4) | 3.3793 | -0.0031 |
+| `rand-m-rel4` (random probe, rho=4) | 3.3838 | **+0.0014** |
+| `am-perpn4` (pure sideways, rho=-4) | 3.6595 | +0.277 |
+| `am-reln1` (cross-geometry ascent, rho=-1) | 3.4735 | +0.091 |
+
+**The random control does nothing** (3.3838 vs baseline 3.3824). An isotropic
+off-trajectory probe at the same norm (8.10 vs 7.79) buys exactly zero. The
+effect is specific to Adam's geometry: not gradient smoothing, not noise
+regularization, not "any perturbation of this size". This was the outcome that
+would have deflated the whole project, and it is ruled out.
+
+**Neither hypothesis was right; the gain splits into ~equal thirds** of am-rel4's
+0.0112 over baseline:
+- **~0.0049** from perturbing the *non*-muon-eligible params (embeddings, 1D).
+  Those are Adam-descended, so this is adam->adam lookahead — the single largest
+  contributor, and consistent with `aa-rel2` being the strongest cell in the
+  grid (-0.0225 vs the adam baseline 3.3945). I had treated this coverage
+  difference purely as a confound to control away; it is actually where most of
+  the effect lives.
+- **~0.0031** sideways component (perp4 3.3793 vs its coverage-matched control
+  elig 3.3761).
+- **~0.0032** forward/lookahead component.
+
+**Retraction: "an orthogonal perturbation is sign-symmetric by construction".**
+I used that this morning to argue `am-perpn4` (rho=-4) could stand in for
+|rho|=4. It is false, and the gap between `am-perp4` (3.3793) and `am-perpn4`
+(3.6595) is the measurement of how false. The direction is orthogonal to the
+*descent direction*, not to the *gradient*: Muon's orthogonalized step is not
+the gradient, so the projected Adam direction keeps a large gradient component.
+rho>0 still probes partly downhill and rho<0 partly uphill. `am-perpn4` was
+measuring ascent, not sideways — which is why the earlier journal entry's
+"first evidence against the sideways-probe hypothesis" was reading the wrong
+variable. The actual sideways datapoint, perp4, is mildly *beneficial*.
+
+`am-reln1` = 3.4735 also makes cross-geometry ascent **worse** than matched
+ascent (`mm-reln1` 3.3983). The ascent side degrades further the more the
+geometries are allowed to differ — the mirror image of the lookahead side,
+where crossing geometries helps.
