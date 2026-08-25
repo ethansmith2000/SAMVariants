@@ -16,7 +16,7 @@ export TMPDIR=/tmp
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 CONFIGS=(
-  long-muon long-am-rel4 long-mm-absn2
+  long-am-rel4 long-mm-reln1
 )
 MAX_ATTEMPTS=3
 

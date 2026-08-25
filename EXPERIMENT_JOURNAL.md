@@ -659,3 +659,69 @@ Also installed `sam_watchdog` as a supervisor service — it was written after t
 38h stall but was not actually running. STALL_MIN raised 25 -> 45min, because
 the long runs validate every 2500 steps (~21min) and 25min sits too close to a
 normal quiet gap to be a safe kill threshold.
+
+## 2026-08-25 — the watchdog killed 8 of 10 queued runs (my error)
+
+Of the 10 jobs queued on 08-23, **2 completed and 8 were killed before they ever
+started**. Cause: the `sam_watchdog` service I installed that same day.
+
+`watchdog.sh` finds trainers with `pgrep -f "train_gpt.py --override"`. A
+gpu-claim **waiter** carries the entire trailing command in its own argv, so
+that pattern matches a job that is merely sitting in the queue holding no GPU.
+A waiter never writes to its log, so the log's mtime stays at creation time and
+the job looks "stalled" the instant STALL_MIN (45min) elapses — and gets killed.
+Each config burned its 3 retries the same way, which is why 8 logs are exactly
+0 bytes and both queue services exited early. The watchdog was written to
+prevent wasted GPU-hours after the 38h deadlock; running it unguarded cost more
+than the failure it was written for.
+
+Two guards added, and verified against live processes on the box (a gpu-claim
+wrapper and a real trainer are now correctly separated):
+1. skip any process whose argv contains `gpu-claim` — only the real trainer
+   child is ever a target;
+2. skip any log of size 0 — an empty log means "not started yet", not "stalled".
+Kills now also append to `slurm_logs/watchdog.log`; the previous `echo`s went to
+supervisor's /dev/stdout and were unrecoverable exactly when needed.
+
+### The two results that did land
+
+**`long-muon` (100k steps, cosine to 0) — eval 2.9813.** Smooth descent
+3.94 -> 2.99, no instability. For reference the 25k/constant-LR baseline was
+3.3824. 100k steps = 3.3B tokens for this ~200M-param model, i.e. ~0.8x
+Chinchilla-optimal, versus 0.82B (~0.2x) for the whole 25k grid. This is a
+materially different regime, which is the point.
+
+**`sweep6-am-perpn4` (adam⊥muon -> muon, rho=-4) — eval 3.6595.** Healthy
+monotone run (5.67 -> 3.66), just far worse than the 3.3824 baseline (+0.277).
+Its perturbation norm was 7.77 vs 1.95 for the 25k mm-reln1 run: a large,
+purely off-trajectory displacement.
+
+This is the first evidence against the **strong** form of the sideways-probe
+hypothesis. A perturbation orthogonal to the descent direction is roughly
+sign-symmetric by construction, so rho=-4 should stand in for |rho|=4 — and
+pure sideways at that magnitude is strongly harmful, not beneficial. But the
+picture is not simply "sideways bad": adam->muon@4 (2.2 forward + 3.3 sideways)
+= 3.3712 still beats muon->muon@4 (4.0 forward, 0 sideways) = 3.3741. So a
+moderate sideways admixture helps while pure sideways is destructive — a
+non-monotonicity that one datapoint cannot resolve. `sweep6-am-perp4` (+4) and
+`sweep6-am-rel4-elig` (coverage control) are requeued and settle it.
+
+### Changes to the long-run design (Ethan, 2026-08-25)
+
+- **Ascent arm switched from absolute back to relative scale.** Ethan's
+  objection is correct and my earlier reasoning was backwards: running the
+  ascent arm on `absolute` while the lookahead arm ran `relative` confounds
+  *sign* with *scale semantics*, which is the single comparison the arm exists
+  to make. Consistency wins; `long-mm-absn2` is replaced by `long-mm-reln1`
+  (relative rho=-1, matching the 25k `mm-reln1` datapoint 3.3983 for a clean
+  short-vs-long comparison). If that arm shows nothing, an absolute-rho variant
+  is the follow-up that distinguishes "ascent doesn't work" from "the radius
+  decayed away with the LR" — as a deliberate ablation, not a mixed default.
+- **Linear decay is the default going forward** (Ethan's preference). This
+  study keeps cosine, because `long-muon` is already complete and re-running a
+  13h baseline to change decay shape buys nothing: the comparison that matters
+  is internal to the study and all three arms share the schedule.
+- Ethan's point on run length is the load-bearing one: decay only manufactures
+  convergence if the run is long enough that the schedule has actually come
+  down. A 5-10k-step slice of a 100k schedule still sits near peak LR, so short
+  runs cannot fake convergence by decaying faster.
