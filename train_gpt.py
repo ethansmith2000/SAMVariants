@@ -161,6 +161,21 @@ def _build_optimizer(args, model, optimizer_grouped_parameters):
             eps=args.adam_epsilon,
         )
 
+    if mode == "nadam":
+        # The control for the adam->adam lookahead arm. NAdam (Dozat 2016) is
+        # Nesterov-for-Adam via momentum reformulation: its extrapolation is
+        # fixed by beta1 (~one update length) rather than tunable. Whatever it
+        # recovers of hybrid adam->adam's gain is prior art, not our result.
+        return torch.optim.NAdam(
+            optimizer_grouped_parameters,
+            lr=args.learning_rate,
+            betas=(args.adam_beta1, args.adam_beta2),
+            eps=args.adam_epsilon,
+            # HybridSAM decouples weight decay (param *= 1 - lr*wd); NAdam's
+            # default is coupled L2, which would make this a two-variable change.
+            decoupled_weight_decay=True,
+        )
+
     if mode == "muon":
         return Muon(
             optimizer_grouped_parameters,

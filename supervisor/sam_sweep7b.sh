@@ -17,6 +17,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 CONFIGS=(
   sweep7-aa-rel8
+  sweep7-nadam
 )
 MAX_ATTEMPTS=3
 

@@ -830,3 +830,76 @@ Ascent (rho<0) remains uniformly bad and worsens with |rho| and with geometry
 mismatch: mm -0.25=+0.004, mm -1=+0.016, am -1=+0.091 vs their baselines. The
 10 queued cells complete the negative half of the map rather than probing a
 live hypothesis.
+
+## 2026-08-25 (night) — LONG RUNS REVERSE THE RESULT
+
+| run | 100k steps, cosine to 0 | vs baseline |
+|---|---|---|
+| `long-muon` (baseline) | **2.98133** | — |
+| `long-am-rel4` (adam->muon rho=+4) | 2.98724 | **+0.0059 (worse)** |
+| `long-mm-reln1` (muon->muon rho=-1) | 2.98770 | +0.0064 (worse) |
+
+At 25k steps with constant LR, adam->muon@4 beat the Muon baseline by **-0.0129**
+(3-seed means, baseline seed sd 0.00033). At 100k steps with cosine decay, the
+same config **loses by +0.0059**. The sign of the effect flips.
+
+The lookahead gain measured across the entire grid so far is, on this evidence,
+a short-horizon / constant-LR artifact. It does not survive 4x the tokens with a
+decaying LR — which is the regime any real claim has to hold in.
+
+What this does and does not establish:
+- It does **not** show lookahead can never help at longer horizons. rho=4 was
+  tuned at 25k/constant; the honest statement is that the *tuned configuration
+  does not transfer*, and an optimum re-tuned at 100k/cosine is untested.
+- The long runs are **n=1**. Seed sd is known only at 25k (0.00033 for the
+  baseline). The +0.0059 gap is ~18x that, so it is probably real, but long-run
+  seed noise is unmeasured. Seeds at 100k are the obvious next spend.
+- The relative-rho/decay interaction is a genuine confound here: under cosine
+  decay a relative rho shrinks the perturbation with the LR, so the treatment
+  fades late in training. That predicts convergence *to* baseline, though, not
+  a loss to it.
+- The ascent arm (`long-mm-reln1`, +0.0064) is no better than lookahead at long
+  horizon. The flat-minima hypothesis gets no support even in the regime that
+  was supposed to favour it. That was the main reason for running long, and the
+  answer is negative.
+
+### Prior art: the adam->adam arm is largely known territory
+
+Ethan's instinct was right. Evaluating the gradient at a point extrapolated
+along the update direction and applying the step from the original point is:
+- **Nesterov/NAG in its "true" form**, and for Adam specifically **NAdam**
+  (Dozat 2016) and **Adan** (arXiv 2208.06677) — both reformulate the
+  extrapolation into momentum algebra to avoid the extra evaluation, with the
+  extrapolation length fixed by beta1 (~one update).
+- **Extragradient** (Korpelevich 1976) and **ExtraAdam / Optimistic Adam**
+  (Gidel et al., arXiv 1802.10551; Daskalakis et al. 2018) from the
+  variational-inequality / GAN literature. ExtraAdam already carries a
+  *separately tunable* extrapolation step size, which is close to our rho.
+  That literature also reports that forcing extrapolation = update step size
+  hurts, i.e. our "rho > 1 is better" finding has precedent.
+- Note **Lookahead (Zhang et al. 2019)** is a *different* algorithm despite the
+  name: slow/fast weight interpolation, no extrapolated gradient evaluation.
+
+So `adam->adam` with rho>0 is best described as NAG-form Nesterov-Adam with a
+tunable, larger-than-standard extrapolation — not a new algorithm. Queued
+`sweep7-nadam` (torch NAdam, beta1=0.95 to match, decoupled wd) to measure how
+much of aa-rel4's -0.0339 is simply NAdam. On the muon side the analogous
+control (muon-nesterov 3.3774 vs muon 3.38241) recovers ~58% of mm-rel4's gain,
+so a large fraction of the adam side is likely prior art too.
+
+### Incident: duplicate concurrent runs from `supervisorctl restart`
+
+Restarting `sam_sweep7b` to append the NAdam job killed only the wrapper
+script, leaving its gpu-claim wrapper and trainer orphaned and still holding a
+GPU; the new service then started a **second** `sweep7-aa-rel8` that trained
+concurrently into the same log and checkpoint directory (GPU 4 and GPU 1, ~1.8h
+overlap). Killed the orphan by PID and kept the supervised instance, which
+resumed from the step-10000 checkpoint. `sweep7-aa-rel8.log` contains
+interleaved output from both instances up to 23:50 and should not be trusted
+for anything but the final eval line.
+
+Fix: `stopasgroup=true` / `killasgroup=true` added to every `supervisor/*.conf`
+in the repo. NOT yet applied to `/etc/supervisor/conf.d` — `supervisorctl
+update` restarts changed programs, which would kill sweep7's six running jobs.
+Apply at the next natural gap. Two trainers (`sweep7-aa-rel8`, `sweep7-nadam`)
+are currently running unsupervised as a result; the watchdog still covers stalls.
