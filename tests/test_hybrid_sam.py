@@ -274,62 +274,6 @@ def test_positive_rho_perturbs_forward_along_descent():
 
 
 
-def test_ascent_orthogonalize_removes_forward_component():
-    """The perturbation must be orthogonal to the descent step it was projected against."""
-    torch.manual_seed(0)
-    param = torch.nn.Parameter(torch.randn(32, 16))
-    # weight_decay=0 so the applied step is exactly -lr*descent_dir, which is
-    # what the projection is taken against (wd is applied after, and is not part
-    # of the descent geometry).
-    opt = HybridSAM([param], lr=1e-2, rho=4.0, perturb_with="adam", update_with="muon",
-                    perturbation_scale="relative", ascent_orthogonalize=True,
-                    nesterov=False, weight_decay=0.0)
-    for _ in range(5):
-        opt.zero_grad()
-        param.grad = torch.randn_like(param)
-        # weights sit at w~ between steps: strip the *previous* perturbation to
-        # recover clean w, else "step_taken" also contains last step's revert.
-        prev = opt.state[param].get("perturb")
-        w_before = param.data.clone() if prev is None else param.data - prev
-        opt.step()
-        eps = opt.state[param]["perturb"]
-        step_taken = (param.data - eps) - w_before
-        cos = torch.dot(eps.flatten(), step_taken.flatten()) / (
-            eps.norm() * step_taken.norm() + 1e-12)
-        assert abs(cos.item()) < 1e-3, f"perturbation not orthogonal to step: cos={cos.item()}"
-
-
-def test_ascent_orthogonalize_preserves_magnitude():
-    """Orthogonalizing must not change ||eps||: rho still means rho update-lengths."""
-    torch.manual_seed(0)
-    results = {}
-    for ortho in (False, True):
-        torch.manual_seed(0)
-        param = torch.nn.Parameter(torch.randn(32, 16))
-        opt = HybridSAM([param], lr=1e-2, rho=4.0, perturb_with="adam", update_with="muon",
-                        perturbation_scale="relative", ascent_orthogonalize=ortho, nesterov=False)
-        torch.manual_seed(1)
-        for _ in range(5):
-            opt.zero_grad()
-            param.grad = torch.randn_like(param)
-            opt.step()
-        results[ortho] = opt.state[param]["perturb"].norm().item()
-    assert math.isclose(results[False], results[True], rel_tol=1e-3), results
-
-
-def test_matched_geometry_orthogonalize_is_noop():
-    """adam->adam with orthogonalize has no sideways part: perturbation is skipped."""
-    torch.manual_seed(0)
-    param = torch.nn.Parameter(torch.randn(32, 16))
-    opt = HybridSAM([param], lr=1e-2, rho=4.0, perturb_with="adam", update_with="adam",
-                    perturbation_scale="relative", ascent_orthogonalize=True)
-    for _ in range(3):
-        opt.zero_grad()
-        param.grad = torch.randn_like(param)
-        opt.step()
-    assert "perturb" not in opt.state[param] or opt.state[param]["perturb"] is None
-
-
 def test_random_ascent_runs_and_scales():
     torch.manual_seed(0)
     param = torch.nn.Parameter(torch.randn(32, 16))
@@ -345,7 +289,7 @@ def test_random_ascent_runs_and_scales():
 
 
 def test_perturb_muon_eligible_only_matches_orthogonalize_coverage():
-    """The coverage-matched control must perturb exactly the params perp mode keeps."""
+    """perturb_muon_eligible_only must skip 1D and oversized params."""
     torch.manual_seed(0)
     params = [torch.nn.Parameter(torch.randn(32, 16)),   # muon-eligible
               torch.nn.Parameter(torch.randn(64)),        # 1D -> adam fallback
@@ -363,9 +307,7 @@ def test_perturb_muon_eligible_only_matches_orthogonalize_coverage():
             opt.step()
         return [opt.state[p].get("perturb") is not None for p in ps]
 
-    assert run(ascent_orthogonalize=True) == run(perturb_muon_eligible_only=True), (
-        run(ascent_orthogonalize=True), run(perturb_muon_eligible_only=True))
-    assert run(ascent_orthogonalize=True) == [True, False, False]
+    assert run(perturb_muon_eligible_only=True) == [True, False, False]
     assert run() == [True, True, True]   # default perturbs everything
 
 

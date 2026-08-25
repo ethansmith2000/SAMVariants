@@ -68,24 +68,6 @@ def _is_muon_eligible(param, group):
 
 
 
-def _project_out(direction, ref, eps):
-    """`direction` with its component along `ref` removed (None if ~nothing remains).
-
-    Used by ascent_orthogonalize to strip the forward/lookahead component out of
-    the perturbation, leaving only the part of the other optimizer's geometry
-    that the descent direction never explores.
-    """
-    d, r = direction.flatten(), ref.flatten()
-    rr = r.dot(r)
-    if rr <= eps:
-        return direction
-    out = direction - ref * (d.dot(r) / rr)
-    # Near-parallel to ref => what's left is numerical noise, and the relative
-    # scaling would blow it up to a full rho*step_norm of garbage. Skip instead.
-    if out.norm() < 1e-3 * direction.norm():
-        return None
-    return out
-
 class HybridSAM(torch.optim.Optimizer):
 
     def __init__(
@@ -111,13 +93,9 @@ class HybridSAM(torch.optim.Optimizer):
         muon_max_dim=16384,
         muon_fallback_ascent: Literal["skip", "momentum", "adam"] = "skip",
         perturb_muon_eligible_only=False,  # restrict perturbation to muon-eligible params.
-                                      # Coverage-matched control for ascent_orthogonalize:
-                                      # on non-eligible params muon-descent falls back to
-                                      # adam, so an adam ascent direction is parallel there
-                                      # and the orthogonal probe drops them anyway.
-        ascent_orthogonalize=False,   # project the ascent direction orthogonal to the
-                                      # descent direction: a pure "sideways" probe with
-                                      # the lookahead/forward component removed.
+                                      # Isolates how much of the gain comes from perturbing
+                                      # embeddings/1D params (which muon-descent hands to
+                                      # adam): measured at ~44% of adam->muon@4's total.
         track_stats=False,
         perturb_with=None,   # clearer alias for `ascent` (a geometry, not a direction)
         update_with=None,    # clearer alias for `descent`
@@ -150,7 +128,6 @@ class HybridSAM(torch.optim.Optimizer):
             step_norm_beta=step_norm_beta,
             muon_max_dim=muon_max_dim,
             muon_fallback_ascent=muon_fallback_ascent,
-            ascent_orthogonalize=ascent_orthogonalize,
             perturb_muon_eligible_only=perturb_muon_eligible_only,
         )
         super().__init__(params, defaults)
@@ -283,11 +260,6 @@ class HybridSAM(torch.optim.Optimizer):
             direction, family = self._ascent_direction(param, state, group)
             if direction is None:
                 continue
-            if group["ascent_orthogonalize"]:
-                direction = _project_out(direction, item["descent_dir"], group["eps"])
-                if direction is None:
-                    continue   # ascent geometry ~parallel to descent: no sideways part
-                family = family + "_perp"
             pending.append(
                 {"group": group, "param": param, "state": state,
                  "grad": item["grad"], "direction": direction, "family": family}

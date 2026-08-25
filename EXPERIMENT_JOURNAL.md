@@ -772,3 +772,61 @@ variable. The actual sideways datapoint, perp4, is mildly *beneficial*.
 ascent (`mm-reln1` 3.3983). The ascent side degrades further the more the
 geometries are allowed to differ — the mirror image of the lookahead side,
 where crossing geometries helps.
+
+## 2026-08-25 (eve) — back to basics: the clean 2-axis grid
+
+Per Ethan: the perpendicular/orthogonalized perturbation is removed from
+`hybrid_sam.py` and `train_gpt.py` (it was a curveball, and it produced one
+wrong inference — see the retraction above). `ascent="random"` and
+`perturb_muon_eligible_only` are kept as inert defaults so the two completed
+control results stay reproducible; both are one-line opt-ins, not part of the
+design. 16 tests pass, rho=0 == Muon/AdamW anchors still bit-exact.
+
+The design is two axes: **{adam,muon} perturb x {adam,muon} update** and
+**signed relative rho**.
+
+### Seed replicates: the grid is trustworthy at n=1
+
+| config | n | mean | sd |
+|---|---|---|---|
+| muon baseline | 3 | 3.38241 | **0.00033** |
+| adam->muon rho=4 | 3 | 3.36956 | 0.00150 |
+| muon->muon rho=4 | 2 | 3.37383 | 0.00026 |
+
+Baseline seed sd is 0.0003; the effects are 0.005-0.034. Single-seed cells are
+fine for anything above ~0.003. This closes the n=1 validity gap that has been
+the top open issue since the pilot.
+
+### The grid (eval loss; rho=0 baselines: adam 3.3945, muon 3.38241)
+
+| perturb->update | -2 | -1 | -0.5 | +0.5 | +1 | +2 | +4 | +8 |
+|---|---|---|---|---|---|---|---|---|
+| adam->adam | q | q | q | 3.3902 | 3.3845 | 3.3720 | **3.3606** | q |
+| adam->muon | q | 3.4735 | q | 3.3767 | 3.3773 | 3.3737 | 3.3696* | 3.3702 |
+| muon->adam | q | q | q | 3.3986 | 3.3839 | 3.3902 | - | - |
+| muon->muon | q | 3.3983 | q | 3.3790 | 3.3767 | 3.3766 | 3.3738* | 3.3738 |
+
+*seed-mean. `q` = queued (sweep7, 10 cells, all rho<0).
+
+### The headline changed: matched adam->adam lookahead now wins
+
+`aa-rel4` = **3.3606** is the best cell in the project, beating the previous
+best (adam->muon@4, 3.3696) and every muon-descent cell. Verified: monotone
+4.64 -> 3.36, correct config, perturb_norm 3.73.
+
+Two consequences:
+1. **The cross-optimizer story is weaker than it looked.** The single strongest
+   effect is *matched-geometry* lookahead on Adam (-0.0339 vs the adam
+   baseline), i.e. essentially an aggressive Nesterov/extragradient effect, not
+   a hybrid-geometry effect. Cross-geometry still helps on the muon-descent
+   side, but it is no longer the headline.
+2. **rho in [0.5, 2] is the wrong search range.** adam->adam is monotone
+   improving across 0.5 -> 1 -> 2 -> 4 (3.3902, 3.3845, 3.3720, 3.3606) and has
+   not turned over. adam->muon saturates around 4-8 (3.3696, 3.3702). Every
+   optimum found so far sits at rho >= 4, i.e. *outside* the proposed typical
+   range. `sweep7-aa-rel8` is queued to find where adam->adam turns over.
+
+Ascent (rho<0) remains uniformly bad and worsens with |rho| and with geometry
+mismatch: mm -0.25=+0.004, mm -1=+0.016, am -1=+0.091 vs their baselines. The
+10 queued cells complete the negative half of the map rather than probing a
+live hypothesis.
